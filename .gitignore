@@ -1,0 +1,26 @@
+# Compilacion
+/build/
+/build-*/
+*.obj
+*.exe
+*.pdb
+*.ilk
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Qt
+*_autogen/
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Editores
+.vs/
+.vscode/
+*.user
+
+# Registros de herramientas
+aqtinstall.log

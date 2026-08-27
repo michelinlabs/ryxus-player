@@ -1,0 +1,376 @@
+/* ===========================================================================
+   Roxas Player - hoja de estilos
+   Los tokens @nombre los sustituye Theme::styleSheet() por los colores
+   muestreados del skin de referencia, de modo que la paleta vive en un
+   unico sitio (src/ui/Theme.h).
+   =========================================================================== */
+
+/* Sin fondo por defecto: cada region visual pinta UNA sola capa translucida.
+   Si todos los QWidget pintaran, los contenedores anidados acumularian alfa
+   y la imagen de fondo se veria con distinta intensidad en cada zona. */
+QWidget {
+    color: @text;
+    outline: none;
+}
+
+QMainWindow { background-color: @opaqueChrome; }
+
+/* BackgroundHost se pinta a mano (color base + imagen de fondo). */
+#centralRoot { background: transparent; }
+
+QToolTip {
+    background-color: @opaquePanelAlt;
+    color: @text;
+    border: 1px solid @borderLight;
+    padding: 4px 7px;
+}
+
+/* --------------------------------------------------------------- paneles -- */
+
+/* Capa unica: el ecualizador. El panel izquierdo y la barra inferior pintan
+   la suya en su propio paintEvent (ver NowPlayingPanel / PlayerBar). */
+#equalizerPanel       { background-color: @panelAlt; border-top: 1px solid @border; }
+#nowPlayingPanel      { background: transparent; }
+
+/* Contenedores: transparentes. La capa la pone su contenido (arbol, lista,
+   barras de herramientas), que son hermanos y no se solapan. */
+#libraryPanel         { background: transparent; }
+#fileListPanel        { background: transparent; }
+#playlistPanel        { background: transparent; border-left: 1px solid @chrome; }
+#playerBar            { background: transparent; }
+
+#groupingBar, #driveRow {
+    background-color: @panel;
+    border-bottom: 1px solid @chrome;
+}
+
+#searchRow {
+    background-color: @chromeLight;
+    border-top: 1px solid @chrome;
+}
+
+#sectionTitle    { color: @textDim; background: transparent; }
+#statusText      { color: @textFaint; background: transparent; }
+#playlistTotals  { color: @textFaint; background-color: @panel; }
+#placeholderText { color: @textFaint; background: transparent; }
+
+QSplitter#centerSplitter::handle { background-color: @chrome; }
+QSplitter#centerSplitter::handle:hover { background-color: @accent; }
+
+QFrame#eqDivider { color: @border; background-color: @border; max-width: 1px; }
+
+/* ------------------------------------------------------- panel izquierdo -- */
+
+QScrollArea#metaScroll, QScrollArea#metaScroll > QWidget > QWidget {
+    background: transparent;
+}
+
+#metaHeaderBlock { background: transparent; }
+
+#metaTitle, #metaArtist, #metaAlbum {
+    background-color: transparent;   /* explicito: si no, gana QLineEdit */
+    border: none;
+    border-bottom: 1px solid transparent;
+    padding: 1px 2px;
+}
+#metaTitle  { color: @text; }
+#metaArtist { color: @textDim; }
+#metaAlbum  { color: @textFaint; }
+
+#metaTitle:hover, #metaArtist:hover, #metaAlbum:hover {
+    border-bottom: 1px solid @border;
+}
+#metaTitle:focus, #metaArtist:focus, #metaAlbum:focus {
+    background-color: @panelDeep;
+    border-bottom: 1px solid @accentBright;
+    color: @text;
+}
+#metaTitle:disabled, #metaArtist:disabled, #metaAlbum:disabled {
+    color: @textFaint;
+}
+
+#metaTitleLabel  { color: @text;      background: transparent; }
+#metaArtistLabel { color: @textDim;   background: transparent; }
+#metaAlbumLabel  { color: @textFaint; background: transparent; }
+#metaFormat      { color: @textFaint; background: transparent; }
+
+/* ---------------------------------------------- ficha de detalles -------- */
+
+#trackDetails    { background: transparent; }
+#detailKey       { color: @textFaint; background: transparent; }
+#detailValue     { color: @text;      background: transparent; }
+#detailValue[empty="true"] { color: @textFaint; }
+
+#metadataEditor  { background: transparent; }
+#metaWarning    { color: @danger;    background: transparent; }
+#metaFormLabel  { color: @textFaint; background: transparent; }
+#metaExtraPanel { background: transparent; }
+
+#metaFormField {
+    background-color: @panelDeep;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 2px 5px;
+    selection-background-color: @selection;
+}
+#metaFormField:focus  { border: 1px solid @accentBright; }
+#metaFormField:hover  { border: 1px solid @borderLight; }
+#metaFormField:disabled { color: @textFaint; background-color: @panelDeep; }
+
+#nowPlayingFooter { color: @textFaint; background: transparent; }
+
+/* ------------------------------------------------------ busqueda rapida -- */
+
+QLineEdit#quickSearch {
+    background: transparent;
+    border: none;
+    color: @text;
+    padding: 2px 0;
+    selection-background-color: @selection;
+}
+QLineEdit#quickSearch:focus { color: @text; }
+
+/* ------------------------------------------------------- arbol y tablas -- */
+
+QTreeView#libraryTree {
+    background-color: @panel;
+    alternate-background-color: @panel;
+    border: none;
+    color: @textDim;
+    show-decoration-selected: 1;
+}
+
+QTreeView#fileList {
+    background-color: @panel;
+    alternate-background-color: @panelAlt;
+    border: none;
+    color: @text;
+}
+
+QTreeView::item {
+    height: 32px;
+    border: none;
+    padding-left: 2px;
+}
+QTreeView::item:hover           { background-color: @selectionSoft; }
+QTreeView::item:selected        { background-color: @selection; color: @text; }
+QTreeView::item:selected:active { background-color: @selection; color: @text; }
+
+QTreeView::branch { background: transparent; }
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings {
+    image: none;
+    border-image: none;
+}
+
+QHeaderView { background-color: @panel; border: none; }
+QHeaderView::section {
+    background-color: @panel;
+    color: @textDim;
+    padding: 5px 8px;
+    border: none;
+    border-right: 1px solid @chrome;
+    border-bottom: 1px solid @chrome;
+}
+QHeaderView::section:hover { color: @text; }
+QHeaderView::down-arrow, QHeaderView::up-arrow { width: 0; height: 0; image: none; }
+
+/* --------------------------------------------------- lista de reproduccion */
+
+QListView#playlistView {
+    background-color: @panel;
+    border: none;
+    color: @text;
+}
+QListView#playlistView::item { border: none; }
+
+/* -------------------------------------------------------------- scrollbars */
+
+QScrollBar:vertical {
+    background: @chrome;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: @border;
+    min-height: 28px;
+    border-radius: 5px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical:hover   { background: @accent; }
+QScrollBar::handle:vertical:pressed { background: @accentBright; }
+
+QScrollBar:horizontal {
+    background: @chrome;
+    height: 10px;
+    margin: 0;
+}
+QScrollBar::handle:horizontal {
+    background: @border;
+    min-width: 28px;
+    border-radius: 5px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal:hover   { background: @accent; }
+QScrollBar::handle:horizontal:pressed { background: @accentBright; }
+
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; border: none; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+/* ------------------------------------------------------------------ menus */
+
+QMenu {
+    background-color: @opaquePanel;
+    border: 1px solid @borderLight;
+    padding: 4px 0;
+    color: @text;
+}
+QMenu::item {
+    padding: 6px 30px 6px 34px;
+    background: transparent;
+}
+QMenu::item:selected  { background-color: @selection; color: @text; }
+QMenu::item:disabled  { color: @textFaint; }
+QMenu::separator {
+    height: 1px;
+    background: @border;
+    margin: 4px 10px;
+}
+QMenu::icon { left: 10px; }
+QMenu::right-arrow {
+    image: none;
+    border-left: 4px solid @textDim;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    width: 0; height: 0;
+    margin-right: 10px;
+}
+
+/* --------------------------------------------------------------- controles */
+
+QCheckBox { color: @textDim; background: transparent; spacing: 6px; }
+QCheckBox:hover { color: @text; }
+QCheckBox::indicator {
+    width: 13px; height: 13px;
+    border: 1px solid @textFaint;
+    border-radius: 2px;
+    background: @panelDeep;
+}
+QCheckBox::indicator:hover   { border: 1px solid @accentBright; }
+QCheckBox::indicator:checked {
+    background: @accent;
+    border: 1px solid @accentBright;
+}
+
+QComboBox {
+    background-color: @panelDeep;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 3px 8px;
+}
+QComboBox:hover { border: 1px solid @borderLight; }
+QComboBox:focus { border: 1px solid @accentBright; }
+QComboBox::drop-down { border: none; width: 18px; }
+QComboBox::down-arrow {
+    image: none;
+    border-top: 4px solid @textDim;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    width: 0; height: 0;
+    margin-right: 6px;
+}
+QComboBox QAbstractItemView {
+    background-color: @opaquePanel;
+    border: 1px solid @borderLight;
+    selection-background-color: @selection;
+    selection-color: @text;
+    outline: none;
+}
+
+QSpinBox#metaFormField {
+    background-color: @panelDeep;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 2px 5px;
+}
+
+QPlainTextEdit#metaFormField {
+    background-color: @panelDeep;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    selection-background-color: @selection;
+}
+
+/* ---------------------------------------------------- deslizador de volumen */
+
+QSlider#volumeSlider::groove:horizontal {
+    height: 4px;
+    background: @panelDeep;
+    border-radius: 2px;
+}
+QSlider#volumeSlider::sub-page:horizontal {
+    background: @accent;
+    border-radius: 2px;
+}
+QSlider#volumeSlider::handle:horizontal {
+    background: @wave;
+    width: 10px;
+    height: 10px;
+    margin: -4px 0;
+    border-radius: 5px;
+}
+QSlider#volumeSlider::handle:horizontal:hover { background: @text; }
+
+/* ------------------------------------------------------------- dialogos --- */
+
+QDialog, QMessageBox, QInputDialog { background-color: @opaquePanel; }
+#settingsDialog { background-color: @opaquePanel; }
+QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel { background: transparent; }
+
+QPushButton {
+    background-color: @opaquePanelDeep;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 5px 16px;
+    min-width: 70px;
+}
+QPushButton:hover   { border: 1px solid @accentBright; background-color: @selectionSoft; }
+QPushButton:pressed { background-color: @selection; }
+QPushButton:default { border: 1px solid @accent; }
+
+QDialog QLineEdit, QMessageBox QLineEdit, QInputDialog QLineEdit {
+    background-color: @opaquePanelDeep;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 4px 6px;
+    selection-background-color: @selection;
+}
+QDialog QLineEdit:focus, QInputDialog QLineEdit:focus {
+    border: 1px solid @accentBright;
+}
+
+/* ------------------------------------------------- controles del menu ---- */
+
+#bgMenuPanel { background-color: @opaquePanel; }
+#bgMenuLabel { color: @textDim; background: transparent; }
+#bgMenuValue { color: @text;    background: transparent; }
+
+QSlider#bgSlider::groove:horizontal {
+    height: 4px;
+    background: @opaquePanelDeep;
+    border-radius: 2px;
+}
+QSlider#bgSlider::sub-page:horizontal { background: @accent; border-radius: 2px; }
+QSlider#bgSlider::handle:horizontal {
+    background: @wave;
+    width: 11px; height: 11px;
+    margin: -4px 0;
+    border-radius: 5px;
+}
+QSlider#bgSlider::handle:horizontal:hover { background: @text; }
