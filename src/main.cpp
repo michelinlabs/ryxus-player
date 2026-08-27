@@ -1,43 +1,12 @@
 #include "core/Lang.h"
 #include "core/Settings.h"
 #include "core/TrackInfo.h"
-#include "ui/Icons.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
-#include <QPainter>
-#include <QPixmap>
-
-namespace {
-
-// Icono de la aplicacion, generado con el mismo trazo que el logotipo de la
-// barra de titulo para no arrastrar un .ico aparte.
-QIcon buildAppIcon()
-{
-    QIcon icon;
-    for (int size : {16, 24, 32, 48, 64, 128, 256}) {
-        QPixmap pixmap(size, size);
-        pixmap.fill(Qt::transparent);
-
-        QPainter p(&pixmap);
-        p.setRenderHint(QPainter::Antialiasing, true);
-        p.setPen(Qt::NoPen);
-        p.setBrush(Theme::Chrome);
-        p.drawRoundedRect(QRectF(0, 0, size, size), size * 0.18, size * 0.18);
-        Icons::paint(p, Icons::Play,
-                     QRectF(size * 0.18, size * 0.18, size * 0.64, size * 0.64),
-                     Theme::AccentBright);
-        p.end();
-
-        icon.addPixmap(pixmap);
-    }
-    return icon;
-}
-
-} // namespace
 
 int main(int argc, char* argv[])
 {
@@ -46,7 +15,9 @@ int main(int argc, char* argv[])
     app.setApplicationDisplayName(QStringLiteral("Roxas Player"));
     app.setApplicationVersion(QStringLiteral("1.0.0"));
     app.setOrganizationName(QStringLiteral("Roxas"));
-    app.setWindowIcon(buildAppIcon());
+    // Mismo icono que lleva embebido el ejecutable (res/roxas.rc), asi la
+    // ventana, la barra de tareas y el Explorador muestran lo mismo.
+    app.setWindowIcon(QIcon(QStringLiteral(":/res/roxas.ico")));
 
     // TrackInfo viaja entre el hilo de escaneo y el de interfaz.
     qRegisterMetaType<TrackInfo>("TrackInfo");

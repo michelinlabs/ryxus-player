@@ -16,7 +16,7 @@ find_package(taglib CONFIG REQUIRED)
 
 qt_standard_project_setup()
 
-set(RYXUS_SOURCES
+set(ROXAS_SOURCES
     src/main.cpp
 
     src/core/Equalizer.h            src/core/Equalizer.cpp
@@ -58,7 +58,12 @@ set(RYXUS_SOURCES
     third_party/miniaudio_impl.cpp
 )
 
-qt_add_executable(RoxasPlayer WIN32 ${RYXUS_SOURCES})
+# Recurso de Windows: icono del ejecutable y metadatos de version.
+if(WIN32)
+    list(APPEND ROXAS_SOURCES res/roxas.rc)
+endif()
+
+qt_add_executable(RoxasPlayer WIN32 ${ROXAS_SOURCES})
 
 # La hoja de estilos se empaqueta con qt_add_resources y NO dejandola caer en
 # la lista de fuentes: qt_standard_project_setup() activa AUTOMOC y AUTOUIC,
@@ -67,7 +72,8 @@ qt_add_executable(RoxasPlayer WIN32 ${RYXUS_SOURCES})
 qt_add_resources(RoxasPlayer "roxas_assets"
     PREFIX "/res"
     BASE   "res"
-    FILES  res/roxas.qss)
+    FILES  res/roxas.qss
+           res/roxas.ico)
 
 target_include_directories(RoxasPlayer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -101,5 +107,73 @@ if(WIN32)
                     --no-opengl-sw --no-compiler-runtime
                     "$<TARGET_FILE:RoxasPlayer>"
             COMMENT "windeployqt -> bin/")
+    endif()
+endif()
+
+# ===========================================================================
+#  Instalacion y empaquetado
+# ===========================================================================
+#
+# `cmake --install build --prefix <dir>` deja un arbol completo y autonomo:
+# ejecutable, bibliotecas de Qt, complementos, runtime de MSVC y licencias.
+# El instalador de Inno Setup empaqueta ese arbol tal cual.
+
+# Se instala el contenido de bin/, que windeployqt ya dejo completo tras la
+# compilacion (ejecutable + Qt + complementos).
+#
+# No se usa qt_generate_deploy_app_script(): el script que genera Qt 6.8 no
+# entrecomilla la ruta del ejecutable, asi que falla si el proyecto vive en una
+# carpeta con espacios. Se excluyen los compiladores de shaders de Direct3D,
+# que windeployqt copia por dependencia de Qt6Gui y una aplicacion de QtWidgets
+# no llega a usar (15 MB).
+install(DIRECTORY "${CMAKE_BINARY_DIR}/bin/"
+        DESTINATION .
+        USE_SOURCE_PERMISSIONS
+        PATTERN "dxcompiler.dll" EXCLUDE
+        PATTERN "dxil.dll" EXCLUDE)
+
+install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+        "${CMAKE_CURRENT_SOURCE_DIR}/THIRD-PARTY-NOTICES.md"
+        "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+        DESTINATION .)
+
+# Runtime de MSVC junto al ejecutable: asi el instalador no depende de que la
+# maquina tenga el redistribuible de Visual C++.
+if(MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+    include(InstallRequiredSystemLibraries)
+    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION .)
+endif()
+
+# --- instalador de Windows (Inno Setup) ------------------------------------
+#
+# Se genera el script .iss desde la plantilla con la version y las rutas
+# reales, y `cmake --build build --target installer` lo compila.
+if(WIN32)
+    find_program(ISCC_EXE ISCC
+        HINTS "$ENV{LOCALAPPDATA}/Programs/Inno Setup 6"
+              "$ENV{ProgramFiles\(x86\)}/Inno Setup 6"
+              "$ENV{ProgramFiles}/Inno Setup 6")
+
+    set(ROXAS_STAGE_DIR "${CMAKE_BINARY_DIR}/stage")
+    set(ROXAS_INSTALLER_DIR "${CMAKE_BINARY_DIR}/installer")
+
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/RoxasPlayer.iss.in"
+                   "${CMAKE_BINARY_DIR}/RoxasPlayer.iss" @ONLY)
+
+    if(ISCC_EXE)
+        add_custom_target(installer
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${ROXAS_STAGE_DIR}"
+            COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}"
+                                     --prefix "${ROXAS_STAGE_DIR}"
+                                     --config $<CONFIG>
+            COMMAND "${ISCC_EXE}" /Q "${CMAKE_BINARY_DIR}/RoxasPlayer.iss"
+            DEPENDS RoxasPlayer
+            COMMENT "Construyendo el instalador de Windows"
+            VERBATIM)
+    else()
+        message(STATUS "Inno Setup no encontrado: el target 'installer' no estara disponible")
     endif()
 endif()

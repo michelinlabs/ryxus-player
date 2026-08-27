@@ -71,6 +71,28 @@ vcpkg install taglib:x64-windows
 
 ---
 
+## Instalar
+
+En [Releases](https://github.com/michelinlabs/roxas-player/releases) hay un
+instalador de Windows: descarga `RoxasPlayer-x.y.z-win64-setup.exe`, ejecutalo
+y listo. Crea el acceso directo en el menu inicio, se registra en *Programas y
+caracteristicas* para desinstalarlo como cualquier otro programa, y opcional-
+mente asocia los formatos de audio. Si no lo ejecutas como administrador se
+instala solo para tu usuario, sin pedir permisos.
+
+El instalador lleva dentro Qt, TagLib y el runtime de MSVC: no hace falta
+instalar nada mas.
+
+Para construirlo tu mismo hace falta [Inno Setup 6](https://jrsoftware.org/isinfo.php):
+
+```bat
+cmake --build build --target installer
+```
+
+Deja el `.exe` en `build/installer/`.
+
+---
+
 ## Usar
 
 ```bat
@@ -118,7 +140,9 @@ src/core/     Equalizer, AudioEngine, SpectrumAnalyzer, MetadataService,
 src/ui/       MainWindow y los paneles; Theme.h concentra toda la paleta,
               EqCurveEditor es el plot de nodos del ecualizador y
               MetadataEditor la pestaña de edición de etiquetas
-res/          roxas.qss (hoja de estilos con tokens @color)
+res/          roxas.qss (hoja de estilos con tokens @color), roxas.ico y
+              roxas.rc (icono y metadatos del ejecutable en Windows)
+installer/    plantilla del instalador de Inno Setup
 third_party/  miniaudio
 ```
 
