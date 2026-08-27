@@ -1,6 +1,8 @@
 # Compilacion
 /build/
 /build-*/
+# Copia autonoma para uso diario (se regenera con cmake --install)
+/dist/
 *.obj
 *.exe
 *.pdb
