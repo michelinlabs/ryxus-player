@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Effects.h"
 #include "core/Equalizer.h"
 
 #include <QObject>
@@ -15,7 +16,8 @@
 // modo que cambiar de pista no reinicia el dispositivo (sin cortes ni clics).
 //
 // Cadena de proceso en el callback de audio:
-//     decodificador -> ecualizador (8 bandas) -> volumen -> visualizador
+//     decodificador -> ecualizador (12 bandas) -> efectos -> volumen ->
+//     visualizador
 class AudioEngine : public QObject {
     Q_OBJECT
 
@@ -25,7 +27,7 @@ public:
 
     static constexpr int      kDeviceSampleRate = 48000;
     static constexpr int      kDeviceChannels   = 2;
-    static constexpr unsigned kVisualBufferSize = 16384;
+    static constexpr unsigned kVisualBufferSize = 65536;
 
     explicit AudioEngine(QObject* parent = nullptr);
     ~AudioEngine() override;
@@ -56,6 +58,7 @@ public:
     bool  isMuted() const { return m_muted.load(std::memory_order_relaxed); }
 
     Equalizer& equalizer() { return m_equalizer; }
+    Effects&   effects()   { return m_effects; }
 
     // Copia las ultimas `count` muestras mono para el visualizador.
     void copyVisualSamples(float* out, int count) const;
@@ -84,6 +87,7 @@ private:
     QString m_currentPath;
 
     Equalizer m_equalizer;
+    Effects   m_effects;
 
     std::atomic<State>  m_state{State::Stopped};
     std::atomic<float>  m_volume{0.8f};

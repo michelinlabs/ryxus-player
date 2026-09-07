@@ -119,7 +119,11 @@ void paint(QPainter& p, Icon id, const QRectF& rect, const QColor& color, qreal 
 
     switch (id) {
     case Play:
-        triangleRight(p, 13, 12, 11, 13, color);
+        // El centro de masa de un triangulo esta a un tercio de la base, no en
+        // el centro de su caja: centrando la caja el glifo se ve corrido hacia
+        // la izquierda. Se desplaza w/6 a la derecha para que el centroide
+        // caiga justo en el centro del anillo.
+        triangleRight(p, 12.0 + 11.0 / 6.0, 12, 11, 13, color);
         break;
 
     case Pause:

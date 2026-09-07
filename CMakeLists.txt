@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RoxasPlayer VERSION 1.0.0 LANGUAGES CXX)
+project(RoxasPlayer VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,7 @@ qt_standard_project_setup()
 set(ROXAS_SOURCES
     src/main.cpp
 
+    src/core/Effects.h              src/core/Effects.cpp
     src/core/Equalizer.h            src/core/Equalizer.cpp
     src/core/Lang.h                 src/core/Lang.cpp
     src/core/AudioEngine.h          src/core/AudioEngine.cpp
@@ -28,6 +29,7 @@ set(ROXAS_SOURCES
     src/core/WaveformWorker.h       src/core/WaveformWorker.cpp
     src/core/LibraryScanner.h       src/core/LibraryScanner.cpp
     src/core/Settings.h             src/core/Settings.cpp
+    src/core/ShellUtils.h           src/core/ShellUtils.cpp
     src/core/SpectrumAnalyzer.h     src/core/SpectrumAnalyzer.cpp
 
     src/ui/Theme.h                  src/ui/Theme.cpp
@@ -48,6 +50,7 @@ set(ROXAS_SOURCES
     src/ui/PlaylistDelegate.h       src/ui/PlaylistDelegate.cpp
     src/ui/SeekBar.h                src/ui/SeekBar.cpp
     src/ui/PlayerBar.h              src/ui/PlayerBar.cpp
+    src/ui/EffectsRack.h            src/ui/EffectsRack.cpp
     src/ui/EqCurveEditor.h          src/ui/EqCurveEditor.cpp
     src/ui/EqualizerPanel.h         src/ui/EqualizerPanel.cpp
     src/ui/EqSlider.h               src/ui/EqSlider.cpp
@@ -80,6 +83,11 @@ target_include_directories(RoxasPlayer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
 target_link_libraries(RoxasPlayer PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+
+# API del shell (SHOpenFolderAndSelectItems) para el boton "Ubicacion".
+if(WIN32)
+    target_link_libraries(RoxasPlayer PRIVATE shell32 ole32)
+endif()
 
 # TagLib exports different target names across 1.x / 2.x packagings.
 if(TARGET TagLib::tag)

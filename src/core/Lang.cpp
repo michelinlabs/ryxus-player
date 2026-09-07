@@ -19,6 +19,18 @@ const QHash<QString, QString>& englishTable()
         {QStringLiteral("Abrir carpeta..."),           QStringLiteral("Open folder...")},
         {QStringLiteral("Configuracion..."),           QStringLiteral("Settings...")},
         {QStringLiteral("Salir"),                      QStringLiteral("Quit")},
+        {QStringLiteral("Desinstalar Roxas Player..."),
+         QStringLiteral("Uninstall Roxas Player...")},
+        {QStringLiteral("Desinstalar Roxas Player"),
+         QStringLiteral("Uninstall Roxas Player")},
+        {QStringLiteral("Se cerrara el reproductor y se abrira el desinstalador de "
+                        "Windows.\n\n"
+                        "Tus ajustes, temas y listas no se borran: si vuelves a "
+                        "instalarlo, siguen ahi."),
+         QStringLiteral("The player will close and the Windows uninstaller will "
+                        "open.\n\n"
+                        "Your settings, themes and playlists are kept: if you "
+                        "install it again, they are still there.")},
 
         // --- pestanas del panel central ---------------------------------
         {QStringLiteral("Archivos locales"),           QStringLiteral("Local files")},
@@ -163,7 +175,9 @@ const QHash<QString, QString>& englishTable()
 
         // --- ecualizador --------------------------------------------------
         {QStringLiteral("ECUALIZADOR"),                QStringLiteral("EQUALIZER")},
-        {QStringLiteral("Ecualizador de 8 bandas"),    QStringLiteral("8-band equalizer")},
+        {QStringLiteral("Ecualizador y efectos"),      QStringLiteral("Equalizer and effects")},
+        {QStringLiteral("Ecualizador de 12 bandas y efectos"),
+         QStringLiteral("12-band equalizer and effects")},
         {QStringLiteral("Activado"),                   QStringLiteral("Enabled")},
         {QStringLiteral("Preset"),                     QStringLiteral("Preset")},
         {QStringLiteral("Guardar"),                    QStringLiteral("Save")},
@@ -182,6 +196,43 @@ const QHash<QString, QString>& englishTable()
          QStringLiteral("drag the nodes  ·  wheel = Q")},
         {QStringLiteral("Respuesta combinada de las 8 bandas"),
          QStringLiteral("Combined response of the 8 bands")},
+
+        // --- rack de efectos ----------------------------------------------
+        {QStringLiteral("Efectos"),                    QStringLiteral("Effects")},
+        {QStringLiteral("Mostrar u ocultar el rack de efectos"),
+         QStringLiteral("Show or hide the effects rack")},
+        {QStringLiteral("Activar o desactivar este efecto"),
+         QStringLiteral("Turn this effect on or off")},
+        {QStringLiteral("Compresor"),                  QStringLiteral("Compressor")},
+        {QStringLiteral("Iguala la dinamica y levanta lo que queda bajo"),
+         QStringLiteral("Evens out the dynamics and lifts what stays quiet")},
+        {QStringLiteral("Umbral"),                     QStringLiteral("Threshold")},
+        {QStringLiteral("Ratio"),                      QStringLiteral("Ratio")},
+        {QStringLiteral("Ganancia"),                   QStringLiteral("Makeup")},
+        {QStringLiteral("Saturacion"),                 QStringLiteral("Saturation")},
+        {QStringLiteral("Calienta la senal con distorsion suave"),
+         QStringLiteral("Warms up the signal with soft distortion")},
+        {QStringLiteral("Drive"),                      QStringLiteral("Drive")},
+        {QStringLiteral("Mezcla"),                     QStringLiteral("Mix")},
+        {QStringLiteral("Chorus"),                     QStringLiteral("Chorus")},
+        {QStringLiteral("Duplica la senal y la desafina un poco"),
+         QStringLiteral("Doubles the signal and detunes it slightly")},
+        {QStringLiteral("Velocidad"),                  QStringLiteral("Rate")},
+        {QStringLiteral("Profundo"),                   QStringLiteral("Depth")},
+        {QStringLiteral("Eco"),                        QStringLiteral("Delay")},
+        {QStringLiteral("Repeticiones con realimentacion"),
+         QStringLiteral("Repeats with feedback")},
+        {QStringLiteral("Tiempo"),                     QStringLiteral("Time")},
+        {QStringLiteral("Feedback"),                   QStringLiteral("Feedback")},
+        {QStringLiteral("Reverberacion"),              QStringLiteral("Reverb")},
+        {QStringLiteral("Cola de sala, de cabina a nave"),
+         QStringLiteral("Room tail, from booth to hall")},
+        {QStringLiteral("Tamano"),                     QStringLiteral("Size")},
+        {QStringLiteral("Amortigua"),                  QStringLiteral("Damping")},
+        {QStringLiteral("Estereo"),                    QStringLiteral("Stereo")},
+        {QStringLiteral("Abre o cierra la imagen estereo"),
+         QStringLiteral("Widens or narrows the stereo image")},
+        {QStringLiteral("Amplitud"),                   QStringLiteral("Width")},
         {QStringLiteral("Arrastra los nodos: horizontal = frecuencia, vertical = ganancia.\n"
                         "Rueda sobre un nodo = ancho de banda (Q). Doble clic = reiniciar.\n"
                         "Manten Shift para mover solo la ganancia."),

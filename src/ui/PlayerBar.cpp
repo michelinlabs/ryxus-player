@@ -133,7 +133,7 @@ void PlayerBar::buildUi()
     m_equalizer->setStrokeWidth(1.4);
     m_equalizer->setCheckable(true);
     m_equalizer->setColors(Theme::TextFaint, Theme::Text, Theme::AccentBright);
-    m_equalizer->setToolTip(Lang::tr("Ecualizador de 8 bandas"));
+    m_equalizer->setToolTip(Lang::tr("Ecualizador de 12 bandas y efectos"));
     toolRow->addWidget(m_equalizer);
 
     m_clock = new FlatButton(Icons::Clock, rightBlock);

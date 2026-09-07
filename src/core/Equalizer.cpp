@@ -8,8 +8,14 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
+// Doce puntos repartidos casi en octavas. Frente al reparto anterior de ocho
+// se ganan tres nodos por debajo de 200 Hz (32, 100 y 170 Hz), que es donde la
+// curva se quedaba corta: con una sola banda a 60 Hz no habia forma de dibujar
+// nada en el grave sin arrastrar todo el resto.
 const std::array<float, Equalizer::kBands> kDefaultFreqs = {
-    60.0f, 170.0f, 310.0f, 600.0f, 1000.0f, 3000.0f, 6000.0f, 12000.0f
+       32.0f,   60.0f,  100.0f,   170.0f,
+      310.0f,  600.0f, 1000.0f,  1800.0f,
+     3000.0f, 6000.0f,10000.0f, 16000.0f
 };
 
 inline float dbToLinear(float dB) { return std::pow(10.0f, dB / 20.0f); }
@@ -199,28 +205,45 @@ void Equalizer::process(float* interleaved, unsigned frameCount, int channels)
     }
 }
 
-float Equalizer::responseDb(float freqHz) const
+void Equalizer::responseDb(const float* freqHz, float* outDb, int count) const
 {
-    if (!m_enabled.load(std::memory_order_relaxed))
-        return 0.0f;
+    if (!freqHz || !outDb || count <= 0)
+        return;
 
-    const double w = 2.0 * kPi * freqHz / m_sampleRate;
-    const std::complex<double> z1 = std::polar(1.0, -w);
-    const std::complex<double> z2 = z1 * z1;
-
-    double magnitude = 1.0;
-    for (int b = 0; b < kBands; ++b) {
-        const Coeffs k = peaking(m_freqs[b].load(std::memory_order_relaxed),
-                                 m_sampleRate,
-                                 m_qs[b].load(std::memory_order_relaxed),
-                                 m_gains[b].load(std::memory_order_relaxed));
-        const std::complex<double> num = double(k.b0) + double(k.b1) * z1 + double(k.b2) * z2;
-        const std::complex<double> den = 1.0          + double(k.a1) * z1 + double(k.a2) * z2;
-        if (std::abs(den) > 1e-12)
-            magnitude *= std::abs(num / den);
+    if (!m_enabled.load(std::memory_order_relaxed)) {
+        std::fill(outDb, outDb + count, 0.0f);
+        return;
     }
 
-    const double db = 20.0 * std::log10(std::max(magnitude, 1e-9))
-                    + m_preamp.load(std::memory_order_relaxed);
-    return static_cast<float>(db);
+    std::array<Coeffs, kBands> coeffs;
+    for (int b = 0; b < kBands; ++b) {
+        coeffs[b] = peaking(m_freqs[b].load(std::memory_order_relaxed),
+                            m_sampleRate,
+                            m_qs[b].load(std::memory_order_relaxed),
+                            m_gains[b].load(std::memory_order_relaxed));
+    }
+    const double preamp = m_preamp.load(std::memory_order_relaxed);
+
+    for (int i = 0; i < count; ++i) {
+        const double w = 2.0 * kPi * freqHz[i] / m_sampleRate;
+        const std::complex<double> z1 = std::polar(1.0, -w);
+        const std::complex<double> z2 = z1 * z1;
+
+        double magnitude = 1.0;
+        for (const Coeffs& k : coeffs) {
+            const std::complex<double> num = double(k.b0) + double(k.b1) * z1 + double(k.b2) * z2;
+            const std::complex<double> den = 1.0          + double(k.a1) * z1 + double(k.a2) * z2;
+            if (std::abs(den) > 1e-12)
+                magnitude *= std::abs(num / den);
+        }
+
+        outDb[i] = float(20.0 * std::log10(std::max(magnitude, 1e-9)) + preamp);
+    }
+}
+
+float Equalizer::responseDb(float freqHz) const
+{
+    float db = 0.0f;
+    responseDb(&freqHz, &db, 1);
+    return db;
 }

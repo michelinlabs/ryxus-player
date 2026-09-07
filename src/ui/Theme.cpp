@@ -85,6 +85,19 @@ const QVector<Palette>& palettes()
         make("nord",       "Nord",             false, "#2E3440", "#333B49", "#3B4252", "#363D4C", "#2B303B", "#4C566A", "#434C5E", "#5E81AC", "#81A1C1", "#88C0D0", "#ECEFF4", "#AEB6C4", "#7B8494", "#434C5E", "#4C566A", "#BF616A", "#D8DEE9"),
         make("monocromo",  "Monocromo",        false, "#141414", "#1A1A1A", "#242424", "#202020", "#1A1A1A", "#3A3A3A", "#2E2E2E", "#5E5E5E", "#7C7C7C", "#ABABAB", "#F0F0F0", "#A0A0A0", "#6C6C6C", "#2E2E2E", "#383838", "#B45A5A", "#DADADA"),
         make("papel",      "Papel (claro)",    true,  "#E8E6E1", "#EFEDE8", "#F7F5F1", "#F1EFEA", "#E4E1DA", "#C9C2DC", "#DCD7E9", "#6E5F9E", "#8878BC", "#5B4C8C", "#26232B", "#5E5966", "#8E8896", "#D6D2CA", "#C7C2B9", "#B04A3A", "#9A93A8"),
+
+        make("medianoche", "Medianoche",       false, "#0D1117", "#131A24", "#172130", "#141D2A", "#101823", "#1E3A5F", "#172C46", "#2D6CB5", "#4A8AD4", "#6EA8FA", "#E6EDF6", "#9BAAC0", "#647184", "#1E2836", "#283444", "#D9536F", "#C7D7EA"),
+        make("cereza",     "Cereza",           false, "#16101A", "#1D1522", "#251B2C", "#201727", "#191220", "#4A2452", "#37193E", "#8E3C9B", "#AB55B7", "#CE73D8", "#F4EBF6", "#AE9BB4", "#746A79", "#2F2136", "#3A2942", "#D45A7A", "#E2CFE8"),
+        make("cobre",      "Cobre",            false, "#161211", "#1E1917", "#272020", "#221C1B", "#1A1514", "#4E2E1F", "#3A2217", "#96502F", "#B9683F", "#DE8A5A", "#F5EAE3", "#AC9A90", "#736861", "#332723", "#3F312B", "#C9553F", "#E8D6C8"),
+        make("menta",      "Menta",            false, "#0F1715", "#14201D", "#1A2926", "#17231F", "#121B19", "#1F4A40", "#17372F", "#2A8570", "#3AA88D", "#58CBAC", "#E3F4EF", "#93AAA4", "#62736E", "#20302C", "#2A3A36", "#C86A5A", "#CBE9DF"),
+        make("grafito",    "Grafito",          false, "#17191C", "#1D2023", "#24282C", "#202428", "#1A1D21", "#35404B", "#2A333C", "#4E6377", "#6C8398", "#90A9BE", "#ECEFF2", "#A2AAB3", "#6C747C", "#2C3136", "#373D43", "#BC5F5F", "#D3DAE1"),
+        make("neon",       "Neón",             false, "#08090C", "#0D0F14", "#12151C", "#0F1218", "#0A0C11", "#16384A", "#102938", "#128FA8", "#1CB8D6", "#34E2F0", "#E8FBFF", "#8CA3AC", "#5A6B73", "#191E27", "#232A35", "#FF4D6D", "#A8EEF7"),
+        make("dracula",    "Drácula",          false, "#21222C", "#282A36", "#2E303E", "#292B38", "#22232E", "#44475A", "#383A4C", "#7E5FC0", "#BD93F9", "#FF79C6", "#F8F8F2", "#A9AEC4", "#6272A4", "#343746", "#44475A", "#FF5555", "#E0E0DA"),
+        make("gruvbox",    "Gruvbox",          false, "#1D2021", "#252423", "#32302F", "#2C2A29", "#232120", "#504945", "#3C3836", "#AF8B2C", "#D79921", "#FABD2F", "#EBDBB2", "#BDAE93", "#7C6F64", "#3C3836", "#504945", "#FB4934", "#D5C4A1"),
+        make("solarizado", "Solarizado",       false, "#002B36", "#04303C", "#073642", "#05323E", "#022730", "#0E4A57", "#093B47", "#23759F", "#268BD2", "#4FB6E0", "#EEE8D5", "#93A1A1", "#586E75", "#0B3E4B", "#145263", "#DC322F", "#B9CCCC"),
+        make("tokio",      "Tokio noche",      false, "#16161E", "#1A1B26", "#1F2335", "#1B1E2E", "#171823", "#2E3C64", "#232C4A", "#5A78C4", "#7AA2F7", "#BB9AF7", "#C0CAF5", "#9AA5CE", "#565F89", "#232538", "#2E3148", "#F7768E", "#A9B1D6"),
+        make("arena",      "Arena (claro)",    true,  "#E7DFD1", "#EFE8DC", "#F8F3E9", "#F2EBDF", "#E3DACA", "#DCCBA6", "#EADFC7", "#A9772E", "#C08F3F", "#8A5F1E", "#2E2718", "#6A5F4A", "#988C74", "#D8CFBD", "#C9BFA9", "#A9482F", "#A2937A"),
+        make("nieve",      "Nieve (claro)",    true,  "#E3E7EC", "#ECEFF4", "#F6F8FB", "#EFF2F7", "#DEE3EA", "#C3D3E6", "#DBE4F0", "#4C7BA8", "#6C99C4", "#35608A", "#1F2B36", "#556472", "#8996A3", "#D2D8E0", "#BFC7D2", "#A8483F", "#8FA0B2"),
     };
     return list;
 }

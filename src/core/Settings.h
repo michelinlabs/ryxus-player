@@ -55,6 +55,16 @@ QList<EqPreset> userPresets();
 void saveUserPreset(const EqPreset& preset);
 void removeUserPreset(const QString& name);
 
+// --- rack de efectos -------------------------------------------------------
+// Se guardan por identificador de dispositivo y de parametro, no por indice:
+// asi anadir o reordenar efectos no invalida lo que el usuario tenia puesto.
+bool  effectEnabled(const QString& deviceId, bool fallback = false);
+void  setEffectEnabled(const QString& deviceId, bool value);
+float effectParam(const QString& deviceId, const QString& paramId, float fallback);
+void  setEffectParam(const QString& deviceId, const QString& paramId, float value);
+bool  effectsRackOpen();
+void  setEffectsRackOpen(bool value);
+
 // --- interfaz --------------------------------------------------------------
 QByteArray windowGeometry();
 void       setWindowGeometry(const QByteArray& value);
