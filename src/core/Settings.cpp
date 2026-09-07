@@ -11,11 +11,17 @@
 namespace Settings {
 namespace {
 
+// Lo guardado solo se acepta si trae exactamente las bandas que tiene hoy el
+// ecualizador. Cuando el numero de bandas cambia entre versiones, rellenar las
+// que faltan mezcla dos repartos distintos y deja nodos duplicados encima unos
+// de otros; se prefiere empezar de cero con los valores por defecto.
 QVector<float> toFloats(const QVariant& value, float fallback)
 {
     QVector<float> out(Equalizer::kBands, fallback);
     const QVariantList list = value.toList();
-    for (int i = 0; i < Equalizer::kBands && i < list.size(); ++i)
+    if (list.size() != Equalizer::kBands)
+        return out;
+    for (int i = 0; i < Equalizer::kBands; ++i)
         out[i] = list.at(i).toFloat();
     return out;
 }
@@ -27,6 +33,20 @@ QVector<float> defaultFreqVector()
     QVector<float> out;
     for (int i = 0; i < Equalizer::kBands; ++i)
         out << Equalizer::defaultFrequencies()[i];
+    return out;
+}
+
+QVector<float> toFreqs(const QVariant& value)
+{
+    QVector<float> out = defaultFreqVector();
+    const QVariantList list = value.toList();
+    if (list.size() != Equalizer::kBands)
+        return out;
+    for (int i = 0; i < Equalizer::kBands; ++i) {
+        const float hz = list.at(i).toFloat();
+        if (hz > 0.0f)
+            out[i] = hz;
+    }
     return out;
 }
 
@@ -116,10 +136,7 @@ void setEqGains(const QVector<float>& g) { store().setValue(QStringLiteral("eq/g
 
 QVector<float> eqFrequencies()
 {
-    const QVariant stored = store().value(QStringLiteral("eq/freqs"));
-    if (!stored.isValid() || stored.toList().isEmpty())
-        return defaultFreqVector();
-    return toFloats(stored, 1000.0f);
+    return toFreqs(store().value(QStringLiteral("eq/freqs")));
 }
 void setEqFrequencies(const QVector<float>& f)
 {
@@ -141,19 +158,19 @@ void setEqPresetName(const QString& n) { store().setValue(QStringLiteral("eq/pre
 
 QList<EqPreset> builtinPresets()
 {
-    // Bandas: 60, 170, 310, 600, 1K, 3K, 6K, 12K
+    // Bandas: 32, 60, 100, 170, 310, 600, 1K, 1K8, 3K, 6K, 10K, 16K
     return {
-        makePreset("Plano",       { 0,  0,  0,  0,  0,  0,  0,  0}),
-        makePreset("Rock",        { 5,  3, -1, -2,  1,  3,  5,  4}),
-        makePreset("Pop",         {-1,  2,  4,  4,  2, -1, -2, -1}),
-        makePreset("Jazz",        { 4,  3,  1,  2, -2, -1,  2,  4}),
-        makePreset("Clasica",     { 5,  4,  3,  0,  0,  0,  3,  4}),
-        makePreset("Electronica", { 6,  5,  0, -1,  2,  1,  4,  6}),
-        makePreset("Hip-Hop",     { 7,  5,  2,  3, -1,  1,  2,  3}),
-        makePreset("Vocal",       {-3, -2,  0,  3,  5,  4,  1, -1}),
-        makePreset("Grave +",     { 9,  7,  4,  1,  0,  0,  0,  0}, -3.0f),
-        makePreset("Agudo +",     { 0,  0,  0,  0,  1,  4,  7,  9}, -3.0f),
-        makePreset("Loudness",    { 7,  5,  0, -2, -3, -1,  4,  7}, -2.0f),
+        makePreset("Plano",       { 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}),
+        makePreset("Rock",        { 5,  5,  4,  3, -1, -2,  0,  1,  3,  5,  5,  4}),
+        makePreset("Pop",         {-2, -1,  1,  2,  4,  4,  3,  2, -1, -2, -1,  0}),
+        makePreset("Jazz",        { 4,  4,  3,  3,  1,  2,  0, -2, -1,  2,  4,  4}),
+        makePreset("Clasica",     { 5,  5,  4,  4,  3,  0,  0,  0,  0,  2,  4,  4}),
+        makePreset("Electronica", { 7,  6,  5,  4,  0, -1, -1,  1,  2,  3,  5,  6}),
+        makePreset("Hip-Hop",     { 8,  7,  6,  4,  2,  3,  1, -1,  1,  2,  3,  3}),
+        makePreset("Vocal",       {-4, -3, -2,  0,  1,  3,  5,  5,  4,  2,  0, -1}),
+        makePreset("Grave +",     {10,  9,  7,  5,  3,  1,  0,  0,  0,  0,  0,  0}, -3.0f),
+        makePreset("Agudo +",     { 0,  0,  0,  0,  0,  0,  1,  2,  4,  6,  8,  9}, -3.0f),
+        makePreset("Loudness",    { 8,  7,  6,  3,  0, -2, -3, -2, -1,  3,  6,  7}, -2.0f),
     };
 }
 
@@ -217,6 +234,44 @@ void removeUserPreset(const QString& name)
         s.setValue(QStringLiteral("gains"),  fromGains(presets.at(i).gains));
     }
     s.endArray();
+}
+
+// --- rack de efectos -------------------------------------------------------
+namespace {
+QString effectKey(const QString& deviceId, const QString& leaf)
+{
+    return QStringLiteral("effects/") + deviceId + QLatin1Char('/') + leaf;
+}
+} // namespace
+
+bool effectEnabled(const QString& deviceId, bool fallback)
+{
+    return store().value(effectKey(deviceId, QStringLiteral("enabled")), fallback).toBool();
+}
+
+void setEffectEnabled(const QString& deviceId, bool value)
+{
+    store().setValue(effectKey(deviceId, QStringLiteral("enabled")), value);
+}
+
+float effectParam(const QString& deviceId, const QString& paramId, float fallback)
+{
+    return store().value(effectKey(deviceId, paramId), fallback).toFloat();
+}
+
+void setEffectParam(const QString& deviceId, const QString& paramId, float value)
+{
+    store().setValue(effectKey(deviceId, paramId), value);
+}
+
+bool effectsRackOpen()
+{
+    return store().value(QStringLiteral("effects/rackOpen"), false).toBool();
+}
+
+void setEffectsRackOpen(bool value)
+{
+    store().setValue(QStringLiteral("effects/rackOpen"), value);
 }
 
 // --- interfaz --------------------------------------------------------------

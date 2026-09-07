@@ -41,6 +41,10 @@ signals:
     void propertiesRequested(const TrackInfo& info);
     void revealRequested(const QString& path);
 
+    // Pista bajo el cursor de la lista. La columna izquierda y el editor de
+    // etiquetas la siguen, igual que hacen con la lista de archivos.
+    void selectionChanged(const TrackInfo& info);
+
 private slots:
     void onTabChanged(int index);
     void onAddPlaylist();

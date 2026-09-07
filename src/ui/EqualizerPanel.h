@@ -5,6 +5,7 @@
 #include <QWidget>
 
 class AudioEngine;
+class EffectsRack;
 class EqCurveEditor;
 class EqSlider;
 class FlatButton;
@@ -12,9 +13,12 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 
-// Seccion de ecualizador de 8 bandas. El grueso del panel es el plot con los
+// Seccion de ecualizador de 12 bandas. El grueso del panel es el plot con los
 // nodos arrastrables (EqCurveEditor); alrededor quedan el preamplificador,
 // los presets y el interruptor general.
+//
+// A la derecha, en la franja que quedaba vacia, va el rack de efectos: se
+// muestra con el boton "Efectos" y no le quita alto al plot.
 class EqualizerPanel : public QWidget {
     Q_OBJECT
 
@@ -32,6 +36,7 @@ signals:
     void enabledChanged(bool enabled);
 
 private slots:
+    void setRackOpen(bool open);
     void applyPreset(int comboIndex);
     void storeUserPreset();
     void resetBands();
@@ -50,7 +55,9 @@ private:
     QComboBox*     m_presets = nullptr;
     EqSlider*      m_preamp  = nullptr;
     EqCurveEditor* m_curve   = nullptr;
+    EffectsRack*   m_rack    = nullptr;
     QLabel*        m_hint    = nullptr;
+    FlatButton*    m_effectsButton = nullptr;
     FlatButton*    m_reset   = nullptr;
     FlatButton*    m_store   = nullptr;
     FlatButton*    m_close   = nullptr;

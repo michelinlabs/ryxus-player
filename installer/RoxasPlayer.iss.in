@@ -21,7 +21,21 @@ AppUpdatesURL={#AppURL}/releases
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayName={#AppName}
-UninstallDisplayIcon={app}\{#AppExeName}
+UninstallDisplayIcon={app}\roxas.ico
+AppComments=Reproductor de audio con ecualizador y editor de etiquetas
+AppContact={#AppURL}/issues
+AppReadmeFile={app}\README.md
+VersionInfoVersion={#AppVersion}
+VersionInfoCompany={#AppPublisher}
+VersionInfoProductName={#AppName}
+VersionInfoDescription=Instalador de {#AppName}
+
+; Explicitos aunque sean el valor por defecto: son los dos ajustes de los
+; que depende que el programa salga en "Aplicaciones instaladas" y se
+; pueda quitar desde ahi.
+Uninstallable=yes
+CreateUninstallRegKey=yes
+
 LicenseFile=@CMAKE_CURRENT_SOURCE_DIR@\LICENSE
 SetupIconFile=@CMAKE_CURRENT_SOURCE_DIR@\res\roxas.ico
 OutputDir=@ROXAS_INSTALLER_DIR@
@@ -32,18 +46,25 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
-; Sin privilegios de administrador se instala solo para el usuario actual;
-; el asistente deja elegir. Asi no hace falta elevar para probarlo.
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; Por defecto se instala para todo el equipo. Es lo que hace que la entrada
+; de desinstalacion quede en HKLM, que es donde miran el panel de control y
+; los desinstaladores de terceros; una instalacion solo-para-mi la escribe
+; en HKCU y hay herramientas que no la enumeran. Quien no tenga permisos de
+; administrador puede seguir eligiendo la instalacion personal en el
+; asistente.
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog commandline
 
 [Languages]
 Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+; Marcado por defecto: es lo que espera casi todo el mundo al instalar, y
+; dejarlo en "unchecked" hacia que mucha gente terminara sin acceso directo
+; creyendo despues que se le habia borrado.
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \
-    GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+    GroupDescription: "{cm:AdditionalIcons}"
 Name: "associate"; Description: "Asociar los formatos de audio con {#AppName}"; \
     GroupDescription: "Integracion con Windows:"; Flags: unchecked
 
@@ -53,10 +74,18 @@ Name: "associate"; Description: "Asociar los formatos de audio con {#AppName}"; 
 Source: "@ROXAS_STAGE_DIR@\*"; DestDir: "{app}"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Icono suelto al que apuntan los accesos directos (ver [Icons]).
+Source: "@CMAKE_CURRENT_SOURCE_DIR@\res\roxas.ico"; DestDir: "{app}"; Flags: ignoreversion
+
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
-Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+; Los accesos directos declaran icono y carpeta de trabajo de forma
+; explicita. Sin IconFilename, Windows tiene que sacar el icono del propio
+; .exe cada vez que reconstruye su cache -- tipicamente al reiniciar -- y si
+; eso falla, el acceso directo se queda sin dibujo. Apuntando a un .ico
+; suelto instalado junto al programa, el icono siempre tiene de donde salir.
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\roxas.ico"; IconIndex: 0; Comment: "Reproductor de audio {#AppName}"
+Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"; IconFilename: "{app}\roxas.ico"; IconIndex: 0; Comment: "Quitar {#AppName} del equipo"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\roxas.ico"; IconIndex: 0; Comment: "Reproductor de audio {#AppName}"; Tasks: desktopicon
 
 [Registry]
 ; "Abrir con" y, si se marca la tarea, asociacion de los formatos soportados.
@@ -68,7 +97,7 @@ Root: HKA; Subkey: "Software\Classes\RoxasPlayer.Audio"; \
     ValueType: string; ValueName: ""; ValueData: "Archivo de audio"; \
     Flags: uninsdeletekey; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\RoxasPlayer.Audio\DefaultIcon"; \
-    ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; \
+    ValueType: string; ValueName: ""; ValueData: "{app}\roxas.ico,0"; \
     Flags: uninsdeletekey; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\RoxasPlayer.Audio\shell\open\command"; \
     ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; \

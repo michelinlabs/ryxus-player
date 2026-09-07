@@ -38,16 +38,30 @@ QString formatHz(double hz)
     return QStringLiteral("%1").arg(hz, 0, 'f', 0);
 }
 
-// Un tono violeta distinto por banda, todos dentro de la paleta del skin:
-// se recorre del azulado al rosado sin salirse del rango de acento.
+// Un tono distinto por banda, generado a partir del color de acento del tema
+// activo: se barre +/-42 grados de matiz alrededor de el, del grave al agudo.
+//
+// Antes era una tabla fija de violetas, que era justo lo que pedia el skin
+// original pero desentonaba en cuanto se elegia un tema verde o ambar. Y al
+// ser tabla, tenia exactamente ocho entradas: pasar a doce bandas dejaba las
+// cuatro ultimas en negro.
 QColor bandColor(int band)
 {
-    static const QColor kColors[Equalizer::kBands] = {
-        QColor(0x6E, 0x7C, 0xC8), QColor(0x7A, 0x76, 0xC6), QColor(0x8A, 0x74, 0xC4),
-        QColor(0x9A, 0x74, 0xC0), QColor(0xA8, 0x76, 0xBA), QColor(0xB4, 0x7A, 0xB2),
-        QColor(0xBE, 0x80, 0xA8), QColor(0xC6, 0x88, 0x9E)
-    };
-    return kColors[std::clamp(band, 0, Equalizer::kBands - 1)];
+    const int last = std::max(1, Equalizer::kBands - 1);
+    const double t = double(std::clamp(band, 0, last)) / last;
+
+    const QColor base = Theme::AccentBright;
+
+    // Un tema acromatico (Monocromo) no tiene matiz: hueF() devuelve -1. Ahi
+    // las bandas se separan por brillo, que es lo coherente con el tema.
+    if (base.hueF() < 0.0)
+        return QColor::fromHsvF(0.0, 0.0, 0.55 + t * 0.35);
+
+    const double hue = std::fmod(base.hueF() * 360.0 + 318.0 + t * 84.0, 360.0);
+
+    return QColor::fromHsvF(hue / 360.0,
+                            std::clamp(base.saturationF() * 1.15, 0.25, 0.85),
+                            std::clamp(base.valueF() * 1.02, 0.55, 1.00));
 }
 
 } // namespace
@@ -56,7 +70,10 @@ EqCurveEditor::EqCurveEditor(Equalizer* equalizer, AudioEngine* engine, QWidget*
     : QWidget(parent)
     , m_equalizer(equalizer)
     , m_engine(engine)
-    , m_spectrum(640)   // resolucion fina: el trazo se ve continuo, no escalonado
+    // Una banda por pixel largo: con 640 el trazo ya se veia continuo en el
+    // centro, pero en los graves varias bandas caian en el mismo bin de la
+    // FFT. Con 1024 y la FFT mas larga, el grave deja de dibujarse a tramos.
+    , m_spectrum(1024)
 {
     setObjectName(QStringLiteral("eqCurveEditor"));
     setMouseTracking(true);
@@ -285,8 +302,8 @@ void EqCurveEditor::drawGrid(QPainter& p, const QRectF& box) const
 {
     p.setPen(QPen(Theme::Border, 1));
 
-    static const double kTicks[] = {30, 50, 100, 200, 500, 1000,
-                                    2000, 5000, 10000, 20000};
+    static const double kTicks[] = {20, 30, 50, 80, 150, 300, 500, 1000,
+                                    2000, 3000, 5000, 10000, 20000};
     p.setFont(Theme::uiFont(7));
 
     for (double hz : kTicks) {
@@ -418,11 +435,18 @@ void EqCurveEditor::drawMainCurve(QPainter& p, const QRectF& box) const
     QPainterPath curve;
     const int steps = std::max(2, int(box.width()));
 
+    // Un punto por pixel, en una sola pasada: los coeficientes de las doce
+    // bandas se calculan una vez para toda la curva, no una vez por pixel.
+    std::vector<float> freqs(size_t(steps) + 1);
+    std::vector<float> response(size_t(steps) + 1);
+    for (int i = 0; i <= steps; ++i)
+        freqs[size_t(i)] = float(hzForX(box.left() + box.width() * double(i) / steps));
+    m_equalizer->responseDb(freqs.data(), response.data(), steps + 1);
+
     for (int i = 0; i <= steps; ++i) {
-        const double x  = box.left() + box.width() * double(i) / steps;
-        const double hz = hzForX(x);
-        const double y  = std::clamp(yForDb(m_equalizer->responseDb(float(hz))),
-                                     box.top() - 40.0, box.bottom() + 40.0);
+        const double x = box.left() + box.width() * double(i) / steps;
+        const double y = std::clamp(yForDb(response[size_t(i)]),
+                                    box.top() - 40.0, box.bottom() + 40.0);
         if (i == 0) curve.moveTo(x, y);
         else        curve.lineTo(x, y);
     }

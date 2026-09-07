@@ -26,6 +26,7 @@ AudioEngine::AudioEngine(QObject* parent)
     : QObject(parent)
 {
     m_equalizer.prepare(kDeviceSampleRate);
+    m_effects.prepare(kDeviceSampleRate);
 
     auto* dev = new ma_device();
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
@@ -101,6 +102,7 @@ bool AudioEngine::open(const QString& path)
         releaseDecoderLocked();
         m_decoder = dec;
         m_equalizer.prepare(kDeviceSampleRate);
+        m_effects.prepare(kDeviceSampleRate);
     }
 
     m_currentPath = path;
@@ -259,8 +261,11 @@ void AudioEngine::render(float* output, unsigned frameCount)
 
     m_positionFrames.fetch_add(static_cast<qint64>(framesRead), std::memory_order_relaxed);
 
-    // --- ecualizador de 8 bandas ------------------------------------------
+    // --- ecualizador de 12 bandas -----------------------------------------
     m_equalizer.process(output, static_cast<unsigned>(framesRead), kDeviceChannels);
+
+    // --- rack de efectos ---------------------------------------------------
+    m_effects.process(output, static_cast<unsigned>(framesRead), kDeviceChannels);
 
     // --- alimenta el visualizador (mezcla a mono) -------------------------
     // Se toma ANTES del volumen: el analizador debe mostrar el efecto del

@@ -87,6 +87,7 @@ private slots:
 
     // --- interfaz ----------------------------------------------------------
     void toggleMaximized();
+    void runUninstaller();
     void toggleEqualizerPanel(bool visible);
     void cycleRepeatMode();
     void openFilesDialog();
@@ -103,6 +104,11 @@ private:
     void repaintForTransparency();
     void loadTrackIntoUi(const TrackInfo& info);
     void refreshTrackEverywhere(const TrackInfo& info);
+
+    // Recarga el editor de etiquetas con `info`, salvo que haya cambios sin
+    // guardar. Es lo que mantiene el editor pegado a la seleccion en vez de a
+    // la ultima pista que se abrio en el.
+    void syncTagEditor(const TrackInfo& info);
     Qt::Edges edgesAt(const QPoint& windowPos) const;
 
     // --- audio -------------------------------------------------------------

@@ -9,6 +9,7 @@
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -65,6 +66,15 @@ void PlaylistPanel::buildUi()
     root->addWidget(m_view, 1);
 
     connect(m_view, &QListView::doubleClicked, this, &PlaylistPanel::onItemActivated);
+    connect(m_view->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            [this](const QModelIndex& current, const QModelIndex&) {
+                PlaylistModel* playlist = currentPlaylist();
+                if (!playlist || !current.isValid())
+                    return;
+                const int row = m_proxy->mapToSource(current).row();
+                if (row >= 0 && row < playlist->rowCount())
+                    emit selectionChanged(playlist->trackAt(row));
+            });
     connect(m_view, &QListView::customContextMenuRequested,
             this, &PlaylistPanel::showContextMenu);
 

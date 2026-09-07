@@ -3,7 +3,7 @@
 #include <array>
 #include <atomic>
 
-// Ecualizador parametrico de 8 bandas.
+// Ecualizador parametrico de 12 bandas.
 //
 // Cada banda es un filtro peaking-EQ biquad (formulas RBJ Audio-EQ-Cookbook)
 // en cascada, precedido de un preamplificador. A diferencia de un ecualizador
@@ -16,18 +16,18 @@
 // asignaciones de memoria.
 class Equalizer {
 public:
-    static constexpr int kBands    = 8;
+    static constexpr int kBands    = 12;
     static constexpr int kMaxChans = 8;
 
     static constexpr float kRangeDb       = 15.0f;   // +/- por banda
     static constexpr float kPreampRangeDb = 12.0f;
-    static constexpr float kMinHz         = 30.0f;
+    static constexpr float kMinHz         = 20.0f;
     static constexpr float kMaxHz         = 18000.0f;
     static constexpr float kMinQ          = 0.30f;
     static constexpr float kMaxQ          = 8.00f;
     static constexpr float kDefaultQ      = 1.20f;
 
-    // Reparto inicial de las 8 bandas, de grave a agudo.
+    // Reparto inicial de las bandas, de grave a agudo.
     static const std::array<float, kBands>& defaultFrequencies();
 
     Equalizer();
@@ -59,6 +59,11 @@ public:
 
     // --- hilo de UI: respuesta en magnitud (dB) para dibujar la curva ------
     float responseDb(float freqHz) const;
+
+    // Version por tandas. El plot pide un punto por pixel, y recalcular los
+    // coeficientes de las doce bandas en cada punto se nota; aqui se calculan
+    // una vez y se evaluan todas las frecuencias con ellos.
+    void responseDb(const float* freqHz, float* outDb, int count) const;
 
 private:
     struct Coeffs { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0; };

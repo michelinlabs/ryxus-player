@@ -1,8 +1,9 @@
 # Roxas Player
 
 Reproductor de audio de escritorio en C++17 / Qt 6 para Windows: interfaz
-oscura de tres columnas, ecualizador paramétrico de 8 bandas con espectro en
-vivo y editor de etiquetas que escribe de verdad sobre el archivo.
+oscura de tres columnas, ecualizador paramétrico de 12 bandas con espectro en
+vivo, rack de efectos y editor de etiquetas que escribe de verdad sobre el
+archivo.
 
 ![Roxas Player](docs/screenshot.png)
 
@@ -15,11 +16,17 @@ WAV, OGG y compañía. El dispositivo se abre una sola vez a 48 kHz / f32 y el
 decodificador convierte a ese formato, así que cambiar de pista no produce
 cortes ni clics.
 
-**Ecualizador paramétrico de 8 bandas** al estilo del EQ Eight de Ableton: los
+**Ecualizador paramétrico de 12 bandas** al estilo del EQ Eight de Ableton: los
 nodos se arrastran en los dos ejes (horizontal = frecuencia, vertical =
 ganancia), la curva se arma pasando por ellos y de fondo se dibuja el espectro
-del audio en tiempo real. Filtros *peaking* biquad en cascada más
+del audio en tiempo real, analizado con una FFT de 16384 puntos para que el
+grave no salga dibujado a tramos. Filtros *peaking* biquad en cascada más
 preamplificador, y 11 presets de fábrica además de los que guardes.
+
+**Rack de efectos** que se despliega bajo el ecualizador, también al estilo de
+la cadena de dispositivos de Ableton: compresor, saturación, chorus, eco,
+reverberación y amplitud estéreo. Cada módulo se enciende por separado y
+recuerda sus mandos entre sesiones.
 
 **Editor de metadatos a página completa**, en su propia pestaña *Etiquetas*:
 título, artista, artista del álbum, álbum, género, compositor, año, pista,
@@ -27,8 +34,10 @@ disco, comentario y calificación, con la carátula al lado. Escribe de verdad
 sobre el archivo con TagLib, y la carátula se puede reemplazar, exportar o
 quitar.
 
-**Ocho temas de color** — Violeta nocturno, Ámbar, Bosque, Océano, Carmesí,
-Nord, Monocromo y Papel (claro) — que se cambian en vivo, sin reiniciar.
+**Veinte temas de color** — Violeta nocturno, Ámbar, Bosque, Océano, Carmesí,
+Nord, Monocromo, Medianoche, Cereza, Cobre, Menta, Grafito, Neón, Drácula,
+Gruvbox, Solarizado, Tokio noche y tres claros (Papel, Arena, Nieve) — que se
+cambian en vivo, sin reiniciar.
 
 **Imagen de fondo con transparencia ajustable**, con control de ajuste
 (cubrir / ajustar / estirar / mosaico), transparencia de los paneles y

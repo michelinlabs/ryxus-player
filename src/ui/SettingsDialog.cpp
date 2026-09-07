@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollArea>
 #include <QSlider>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -109,6 +110,9 @@ private:
 
 namespace {
 
+constexpr int kThemeColumns = 4;
+constexpr int kSwatchHeight = 74;   // igual que el setFixedSize de ThemeSwatch
+
 QLabel* sectionTitle(const QString& text, QWidget* parent)
 {
     auto* label = new QLabel(text, parent);
@@ -144,17 +148,35 @@ void SettingsDialog::buildUi()
     themeHint->setFont(Theme::uiFont(9));
     root->addWidget(themeHint);
 
-    auto* grid = new QGridLayout;
+    // La rejilla de temas vive dentro de un area desplazable: hay bastantes
+    // paletas y, sin esto, cada una que se anade estira el dialogo hasta que
+    // no cabe en pantalla.
+    auto* themeArea = new QScrollArea(this);
+    themeArea->setObjectName(QStringLiteral("themeScroll"));
+    themeArea->setFrameShape(QFrame::NoFrame);
+    themeArea->setWidgetResizable(true);
+    themeArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    auto* themeGridHost = new QWidget(themeArea);
+    auto* grid = new QGridLayout(themeGridHost);
+    grid->setContentsMargins(0, 0, 6, 0);
     grid->setSpacing(8);
 
     const QVector<Theme::Palette>& list = Theme::palettes();
     for (int i = 0; i < list.size(); ++i) {
-        auto* swatch = new ThemeSwatch(list.at(i), this);
+        auto* swatch = new ThemeSwatch(list.at(i), themeGridHost);
         connect(swatch, &ThemeSwatch::picked, this, &SettingsDialog::onThemePicked);
-        grid->addWidget(swatch, i / 4, i % 4);
+        grid->addWidget(swatch, i / kThemeColumns, i % kThemeColumns);
         m_swatches.append(swatch);
     }
-    root->addLayout(grid);
+    grid->setRowStretch(grid->rowCount(), 1);
+
+    themeArea->setWidget(themeGridHost);
+
+    // Alto para tres filas justas: se ve que hay mas y se desplaza.
+    const int rows = qMin(3, (list.size() + kThemeColumns - 1) / kThemeColumns);
+    themeArea->setFixedHeight(rows * kSwatchHeight + (rows - 1) * 8 + 4);
+    root->addWidget(themeArea);
     refreshSwatches();
 
     // -------------------------------------------------------------- fondo

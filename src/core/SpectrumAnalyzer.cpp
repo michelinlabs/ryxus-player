@@ -72,7 +72,7 @@ SpectrumAnalyzer::SpectrumAnalyzer(int bandCount)
 
 void SpectrumAnalyzer::setBandCount(int count)
 {
-    count = std::clamp(count, 8, 1024);
+    count = std::clamp(count, 8, 4096);
     if (int(m_levels.size()) == count)
         return;
     m_levels.assign(size_t(count), 0.0f);
@@ -161,25 +161,37 @@ void SpectrumAnalyzer::update(const float* samples, int count)
         return std::sqrt(re * re + im * im);
     };
 
+    const auto binDb = [&](int bin) {
+        return 20.0f * std::log10(std::max(binMagnitude(bin) * norm, 1e-7f));
+    };
+
     for (size_t i = 0; i < m_levels.size(); ++i) {
-        float magnitude = 0.0f;
+        float db = 0.0f;
 
         if (m_binEnd[i] - m_binStart[i] >= 2) {
             // Banda ancha: se queda con el pico del tramo.
+            float magnitude = 0.0f;
             for (int bin = m_binStart[i]; bin < m_binEnd[i]; ++bin)
                 magnitude = std::max(magnitude, binMagnitude(bin));
+            db = 20.0f * std::log10(std::max(magnitude * norm, 1e-7f));
         } else {
-            // En graves una banda cabe dentro de un solo bin, y repetir el
-            // mismo valor en bandas contiguas dibuja escalones. Se interpola
-            // entre bins vecinos usando el centro fraccionario de la banda.
+            // En graves una banda entera cabe dentro de un solo bin. Antes se
+            // interpolaba en lineal entre los dos bins vecinos, y eso dibuja
+            // la envolvente a segmentos rectos: de ahi la linea "discreta"
+            // abajo. Con una parabola sobre tres bins, en dB, la envolvente
+            // sale curva y continua.
             const float center = m_binCenter[i];
-            const int lo = std::clamp(int(center), 1, usableBins - 2);
-            const float frac = std::clamp(center - float(lo), 0.0f, 1.0f);
-            magnitude = binMagnitude(lo) * (1.0f - frac)
-                      + binMagnitude(lo + 1) * frac;
+            const int   k = std::clamp(int(std::lround(center)), 1, usableBins - 2);
+            const float d = std::clamp(center - float(k), -1.0f, 1.0f);
+
+            const float left  = binDb(k - 1);
+            const float mid   = binDb(k);
+            const float right = binDb(k + 1);
+
+            db = mid + 0.5f * d * (right - left)
+                     + 0.5f * d * d * (right - 2.0f * mid + left);
         }
 
-        const float db = 20.0f * std::log10(std::max(magnitude * norm, 1e-7f));
         const float level = std::clamp((db - m_floorDb) / range, 0.0f, 1.0f);
 
         // Ataque instantaneo, caida suave: es lo que da la sensacion de "vivo".

@@ -30,6 +30,44 @@ QToolTip {
 /* Capa unica: el ecualizador. El panel izquierdo y la barra inferior pintan
    la suya en su propio paintEvent (ver NowPlayingPanel / PlayerBar). */
 #equalizerPanel       { background-color: @panelAlt; border-top: 1px solid @border; }
+
+/* --- rack de efectos (se despliega bajo el ecualizador) ------------------ */
+#effectsRack { background: transparent; }
+
+QScrollArea#effectsScroll, QScrollArea#effectsScroll > QWidget > QWidget {
+    background: transparent;
+}
+
+#effectCard {
+    background-color: @panelDeep;
+    border: 1px solid @border;
+    border-radius: 4px;
+}
+#effectCard[on="true"] { border: 1px solid @accent; }
+
+QCheckBox#effectPower             { color: @textDim; spacing: 5px; }
+QCheckBox#effectPower[on="true"]  { color: @accentBright; }
+
+#effectParam                      { color: @textFaint; background: transparent; }
+#effectValue                      { color: @textDim; background: transparent; }
+#effectValue:disabled             { color: @textFaint; }
+
+QSlider#effectSlider::groove:horizontal {
+    height: 3px;
+    background: @opaquePanelAlt;
+    border-radius: 1px;
+}
+QSlider#effectSlider::sub-page:horizontal {
+    background: @accent;
+    border-radius: 1px;
+}
+QSlider#effectSlider::handle:horizontal {
+    width: 9px;
+    margin: -4px 0;
+    background: @wave;
+    border-radius: 2px;
+}
+QSlider#effectSlider::handle:horizontal:hover { background: @accentBright; }
 #nowPlayingPanel      { background: transparent; }
 
 /* Contenedores: transparentes. La capa la pone su contenido (arbol, lista,
@@ -61,7 +99,8 @@ QFrame#eqDivider { color: @border; background-color: @border; max-width: 1px; }
 
 /* ------------------------------------------------------- panel izquierdo -- */
 
-QScrollArea#metaScroll, QScrollArea#metaScroll > QWidget > QWidget {
+QScrollArea#metaScroll, QScrollArea#metaScroll > QWidget > QWidget,
+QScrollArea#themeScroll, QScrollArea#themeScroll > QWidget > QWidget {
     background: transparent;
 }
 

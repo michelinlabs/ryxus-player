@@ -9,9 +9,13 @@
 // sin dependencias de Qt ni de hilos.
 class SpectrumAnalyzer {
 public:
-    static constexpr int kFftSize = 8192;   // 5,9 Hz de resolucion a 48 kHz
+    // 16384 puntos = 2,9 Hz por bin a 48 kHz, el doble de resolucion que los
+    // 8192 de antes. Es lo que se nota en los graves: por debajo de 100 Hz una
+    // banda del reparto logaritmico cabia dentro de un solo bin y la linea
+    // salia a tramos rectos.
+    static constexpr int kFftSize = 16384;
 
-    explicit SpectrumAnalyzer(int bandCount = 256);
+    explicit SpectrumAnalyzer(int bandCount = 512);
 
     void setBandCount(int count);
     int  bandCount() const { return int(m_levels.size()); }

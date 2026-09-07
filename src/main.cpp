@@ -31,7 +31,8 @@ int main(int argc, char* argv[])
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        QStringLiteral("Reproductor de audio con ecualizador de 8 bandas y editor de etiquetas."));
+        QStringLiteral("Reproductor de audio con ecualizador de 12 bandas, "
+                       "rack de efectos y editor de etiquetas."));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(QStringLiteral("archivos"),

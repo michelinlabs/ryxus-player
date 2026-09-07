@@ -4,6 +4,7 @@
 #include "core/MetadataService.h"
 #include "core/Lang.h"
 #include "core/Settings.h"
+#include "core/ShellUtils.h"
 #include "core/WaveformWorker.h"
 #include "ui/BackgroundHost.h"
 #include "ui/EqCurveEditor.h"
@@ -50,6 +51,18 @@
 
 namespace {
 constexpr int kResizeBorder = 6;   // franja sensible al redimensionado
+
+// Ruta del desinstalador que Inno Setup deja junto al ejecutable
+// (unins000.exe, unins001.exe... segun cuantas veces se haya reinstalado).
+// Devuelve una cadena vacia si lo que se esta ejecutando es la copia portable,
+// que ni se instala ni se desinstala.
+QString uninstallerPath()
+{
+    const QDir dir(QCoreApplication::applicationDirPath());
+    const QStringList found = dir.entryList({QStringLiteral("unins*.exe")},
+                                            QDir::Files, QDir::Name);
+    return found.isEmpty() ? QString() : dir.absoluteFilePath(found.last());
+}
 }
 
 MainWindow::MainWindow(QWidget* parent)
@@ -237,15 +250,12 @@ void MainWindow::wireSignals()
             this, [this](int index) {
                 m_centerStack->setCurrentIndex(index);
 
-                // Entrar a "Etiquetas" por la pestana debe cargar sola la
-                // pista en curso; obligar a pasar por el boton seria un paso
-                // de mas que no aporta nada.
-                if (index != 1 || m_tagEditor->track().isValid())
-                    return;
-                if (m_detailsTrack.isValid())
-                    openTagEditor(m_detailsTrack);
-                else if (m_currentTrack.isValid())
-                    openTagEditor(m_currentTrack);
+                // Entrar a "Etiquetas" carga la pista que se este inspeccionando.
+                // Antes esto se saltaba en cuanto el editor ya tenia algo
+                // cargado, y el editor se quedaba clavado en la cancion
+                // anterior por mucho que se cambiara de seleccion.
+                if (index == 1)
+                    syncTagEditor(m_detailsTrack.isValid() ? m_detailsTrack : m_currentTrack);
             });
 
     // --- biblioteca --------------------------------------------------------
@@ -316,6 +326,7 @@ void MainWindow::wireSignals()
     connect(m_playlists, &PlaylistPanel::trackActivated, this, &MainWindow::playPlaylistRow);
     connect(m_playlists, &PlaylistPanel::propertiesRequested, this, &MainWindow::showProperties);
     connect(m_playlists, &PlaylistPanel::revealRequested, this, &MainWindow::revealInExplorer);
+    connect(m_playlists, &PlaylistPanel::selectionChanged, this, &MainWindow::setDetailsTrack);
 
     // --- panel de reproduccion --------------------------------------------
     connect(m_nowPlaying, &NowPlayingPanel::ratingChanged, this, &MainWindow::onRatingChanged);
@@ -858,6 +869,28 @@ void MainWindow::setDetailsTrack(const TrackInfo& info)
 {
     m_detailsTrack = info;
     m_nowPlaying->setDetailsTrack(info);
+    syncTagEditor(info);
+}
+
+void MainWindow::syncTagEditor(const TrackInfo& info)
+{
+    // El editor de etiquetas acompana a la pista inspeccionada. La unica
+    // excepcion son los cambios sin guardar: ahi no se le quita al usuario lo
+    // que esta escribiendo.
+    if (!m_tagEditor || m_tagEditor->isDirty())
+        return;
+
+    if (!info.isValid()) {
+        m_tagEditor->setTrack(TrackInfo());
+        return;
+    }
+
+    if (info.path.compare(m_tagEditor->track().path, Qt::CaseInsensitive) == 0)
+        return;
+
+    // Se relee con caratula: los listados guardan las pistas sin ella.
+    const TrackInfo full = MetadataService::read(info.path, true);
+    m_tagEditor->setTrack(full.isValid() ? full : info);
 }
 
 void MainWindow::openTagEditor(const TrackInfo& info)
@@ -887,15 +920,35 @@ void MainWindow::openTagEditorForCurrent()
         openTagEditor(m_currentTrack);
 }
 
-void MainWindow::revealInExplorer(const QString& path)
+void MainWindow::runUninstaller()
 {
-    const QFileInfo fi(path);
-    if (!fi.exists())
+    const QString uninstaller = uninstallerPath();
+    if (uninstaller.isEmpty())
         return;
 
-    // /select deja el archivo resaltado dentro de su carpeta.
-    QProcess::startDetached(QStringLiteral("explorer.exe"),
-                            {QStringLiteral("/select,") + QDir::toNativeSeparators(path)});
+    const auto answer = QMessageBox::question(
+        this, Lang::tr("Desinstalar Roxas Player"),
+        Lang::tr("Se cerrara el reproductor y se abrira el desinstalador de "
+                 "Windows.\n\n"
+                 "Tus ajustes, temas y listas no se borran: si vuelves a "
+                 "instalarlo, siguen ahi."),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+
+    if (answer != QMessageBox::Yes)
+        return;
+
+    // El desinstalador se copia a si mismo al temporal y relanza, asi que no
+    // le molesta que el ejecutable siga en la carpeta al arrancar; aun asi se
+    // cierra el reproductor para que no bloquee sus propias DLL.
+    if (QProcess::startDetached(uninstaller, {}, QFileInfo(uninstaller).absolutePath()))
+        close();
+    else
+        ShellUtils::revealInFileManager(uninstaller);
+}
+
+void MainWindow::revealInExplorer(const QString& path)
+{
+    ShellUtils::revealInFileManager(path);
 }
 
 void MainWindow::deleteFilesPermanently(const QVector<TrackInfo>& tracks)
@@ -926,6 +979,15 @@ void MainWindow::deleteFilesPermanently(const QVector<TrackInfo>& tracks)
                              Lang::tr("No se pudieron eliminar:\n%1")
                                  .arg(failures.join(QLatin1Char('\n'))));
     }
+
+    // Si lo borrado era lo que habia en el editor de etiquetas, se vacia: si
+    // no, seguiria ofreciendo guardar sobre un archivo que ya no existe.
+    if (!m_tagEditor->track().path.isEmpty()
+        && !QFile::exists(m_tagEditor->track().path)) {
+        m_tagEditor->setTrack(TrackInfo());
+    }
+    if (m_detailsTrack.isValid() && !QFile::exists(m_detailsTrack.path))
+        setDetailsTrack(TrackInfo());
 
     onFolderSelected(m_library->currentFolder());
 }
@@ -1165,7 +1227,7 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
     menu.addSeparator();
 
     QAction* eqAction = menu.addAction(Icons::icon(Icons::Equalizer, iconColor),
-                                       Lang::tr("Ecualizador de 8 bandas"));
+                                       Lang::tr("Ecualizador y efectos"));
     eqAction->setCheckable(true);
     eqAction->setChecked(m_equalizer->isVisible());
     eqAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
@@ -1265,6 +1327,17 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
               &MainWindow::setBackgroundDarkening);
 
     menu.addSeparator();
+
+    // Atajo al desinstalador: aparece solo si el programa se instalo de
+    // verdad. Es la via corta cuando alguien no da con la entrada de
+    // "Aplicaciones instaladas" de Windows.
+    if (!uninstallerPath().isEmpty()) {
+        menu.addAction(Icons::icon(Icons::Trash, iconColor),
+                       Lang::tr("Desinstalar Roxas Player..."),
+                       this, &MainWindow::runUninstaller);
+        menu.addSeparator();
+    }
+
     menu.addAction(Icons::icon(Icons::Close, iconColor),
                    Lang::tr("Salir"), this, &MainWindow::close);
 

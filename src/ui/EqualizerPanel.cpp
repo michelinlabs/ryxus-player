@@ -1,7 +1,9 @@
 #include "ui/EqualizerPanel.h"
 #include "core/Lang.h"
 
+#include "core/AudioEngine.h"
 #include "core/Settings.h"
+#include "ui/EffectsRack.h"
 #include "ui/EqCurveEditor.h"
 #include "ui/EqSlider.h"
 #include "ui/FlatButton.h"
@@ -14,7 +16,13 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
+
+namespace {
+// Alto del panel sin el rack de efectos: cabecera + preamplificador + plot.
+constexpr int kBaseHeight = 220;
+}
 
 EqualizerPanel::EqualizerPanel(Equalizer* equalizer, AudioEngine* engine, QWidget* parent)
     : QWidget(parent)
@@ -22,9 +30,11 @@ EqualizerPanel::EqualizerPanel(Equalizer* equalizer, AudioEngine* engine, QWidge
     , m_engine(engine)
 {
     setObjectName(QStringLiteral("equalizerPanel"));
-    setFixedHeight(220);
+    setFixedHeight(kBaseHeight);
     buildUi();
     loadFromSettings();
+
+    setRackOpen(Settings::effectsRackOpen());
 }
 
 void EqualizerPanel::buildUi()
@@ -40,8 +50,14 @@ void EqualizerPanel::buildUi()
     inner->setObjectName(QStringLiteral("eqInner"));
     inner->setMaximumWidth(940);
     inner->setMinimumWidth(560);
-    outer->addWidget(inner, 3);
-    outer->addStretch(1);
+    outer->addWidget(inner, 0);
+
+    // El rack de efectos ocupa la franja libre a la derecha del ecualizador.
+    // Estando al lado y no debajo, abrirlo no le come alto al plot.
+    m_rack = new EffectsRack(&m_engine->effects(), this);
+    m_rack->hide();
+    outer->addWidget(m_rack, 1);
+    outer->addStretch(0);
 
     auto* root = new QVBoxLayout(inner);
     root->setContentsMargins(14, 7, 14, 9);
@@ -65,7 +81,7 @@ void EqualizerPanel::buildUi()
         m_equalizer->setEnabled(on);
         Settings::setEqEnabled(on);
         m_curve->refreshFromEngine();
-        emit enabledChanged(on);
+        emit enabledChanged(on || m_engine->effects().isAnyEnabled());
     });
 
     header->addSpacing(8);
@@ -87,6 +103,16 @@ void EqualizerPanel::buildUi()
     m_store->setFixedHeight(24);
     header->addWidget(m_store);
     connect(m_store, &FlatButton::clicked, this, &EqualizerPanel::storeUserPreset);
+
+    m_effectsButton = new FlatButton(Lang::tr("Efectos"), inner);
+    m_effectsButton->setIconId(Icons::Equalizer);
+    m_effectsButton->setGlyphSize(14);
+    m_effectsButton->setFixedHeight(24);
+    m_effectsButton->setCheckable(true);
+    m_effectsButton->setFilledWhenChecked(true);
+    m_effectsButton->setToolTip(Lang::tr("Mostrar u ocultar el rack de efectos"));
+    header->addWidget(m_effectsButton);
+    connect(m_effectsButton, &FlatButton::toggled, this, &EqualizerPanel::setRackOpen);
 
     m_reset = new FlatButton(Lang::tr("Reiniciar"), inner);
     m_reset->setIconId(Icons::Revert);
@@ -135,7 +161,27 @@ void EqualizerPanel::buildUi()
 
     root->addLayout(body, 1);
 
+    // El indicador del ecualizador en la barra inferior tambien se enciende
+    // con los efectos: el sonido deja de salir plano igual.
+    connect(m_rack, &EffectsRack::activityChanged, this, [this](bool anyEffect) {
+        emit enabledChanged(m_enable->isChecked() || anyEffect);
+    });
+
     refreshPresetList();
+}
+
+void EqualizerPanel::setRackOpen(bool open)
+{
+    if (!m_rack)
+        return;
+
+    m_rack->setVisible(open);
+    Settings::setEffectsRackOpen(open);
+
+    if (m_effectsButton->isChecked() != open) {
+        QSignalBlocker blocker(m_effectsButton);
+        m_effectsButton->setChecked(open);
+    }
 }
 
 void EqualizerPanel::setAnalyzerActive(bool active)
@@ -283,6 +329,9 @@ void EqualizerPanel::resetBands()
     m_preamp->setValue(0.0f, false);
     m_equalizer->resetBands();
     m_loading = false;
+
+    if (m_rack)
+        m_rack->resetAll();
 
     persistBands();
     Settings::setEqPreamp(0.0f);
