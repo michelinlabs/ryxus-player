@@ -21,10 +21,10 @@ namespace {
 
 constexpr int kTicks      = 1000;   // resolucion interna de cada deslizador
 constexpr int kColumns    = 3;      // 3 x 2 tarjetas
-constexpr int kCardWidth  = 186;
+constexpr int kCardWidth  = 170;
 constexpr int kCardHeight = 95;
-constexpr int kLabelWidth = 58;
-constexpr int kValueWidth = 44;
+constexpr int kLabelWidth = 52;
+constexpr int kValueWidth = 40;
 constexpr int kGap        = 6;
 
 } // namespace
@@ -87,11 +87,19 @@ void EffectsRack::buildUi()
     grid->setColumnStretch(kColumns, 1);
     scroll->setWidget(host);
 
-    // Alto justo para las dos filas mas la barra de desplazamiento, que solo
-    // aparece cuando hace falta.
+    // Ancho fijo: las tarjetas no se estiran, asi que darle mas espacio solo
+    // dejaria hueco vacio, y darle menos obligaria a desplazar la rejilla. Con
+    // esto los seis dispositivos se ven siempre enteros y quien cede ancho es
+    // el ecualizador, que si sabe aprovechar el que le toque.
+    setFixedWidth(sizeHint().width());
+    setMaximumHeight(sizeHint().height());
+}
+
+QSize EffectsRack::sizeHint() const
+{
     const int rows = (Effects::DeviceCount + kColumns - 1) / kColumns;
-    setMinimumWidth(kCardWidth + kGap);
-    setMaximumHeight(rows * kCardHeight + (rows - 1) * kGap + 12);
+    return QSize(kColumns * kCardWidth + (kColumns - 1) * kGap + 14,
+                 rows * kCardHeight + (rows - 1) * kGap + 12);
 }
 
 QWidget* EffectsRack::buildCard(int device)
@@ -137,6 +145,9 @@ QWidget* EffectsRack::buildCard(int device)
         slider->setSingleStep(kTicks / 100);
         slider->setPageStep(kTicks / 20);
         slider->setFixedHeight(14);
+        // Sin foco de teclado: si no, al abrir el rack el area desplazable
+        // salta para "revelar" el primer deslizador y corta las tarjetas.
+        slider->setFocusPolicy(Qt::NoFocus);
         line->addWidget(slider, 1);
 
         auto* value = new QLabel(frame);

@@ -31,6 +31,9 @@ public:
     // El plot solo se refresca cuando el panel esta visible y hay audio.
     void setAnalyzerActive(bool active);
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 signals:
     void closeRequested();
     void enabledChanged(bool enabled);
@@ -56,6 +59,7 @@ private:
     EqSlider*      m_preamp  = nullptr;
     EqCurveEditor* m_curve   = nullptr;
     EffectsRack*   m_rack    = nullptr;
+    QWidget*       m_inner   = nullptr;
     QLabel*        m_hint    = nullptr;
     FlatButton*    m_effectsButton = nullptr;
     FlatButton*    m_reset   = nullptr;

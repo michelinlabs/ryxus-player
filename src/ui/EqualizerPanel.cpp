@@ -16,6 +16,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -48,8 +49,12 @@ void EqualizerPanel::buildUi()
 
     auto* inner = new QWidget(this);
     inner->setObjectName(QStringLiteral("eqInner"));
-    inner->setMaximumWidth(940);
-    inner->setMinimumWidth(560);
+    inner->setMaximumWidth(880);
+    // Minimo bajo a proposito: cuando la ventana viene justa, quien encoge es
+    // el plot -- que sigue siendo usable estrecho -- y no el rack de efectos,
+    // cuyas tarjetas tienen un tamano fijo y se cortarian.
+    inner->setMinimumWidth(420);
+    m_inner = inner;
     outer->addWidget(inner, 0);
 
     // El rack de efectos ocupa la franja libre a la derecha del ecualizador.
@@ -65,7 +70,7 @@ void EqualizerPanel::buildUi()
 
     // --- cabecera ----------------------------------------------------------
     auto* header = new QHBoxLayout;
-    header->setSpacing(10);
+    header->setSpacing(8);
 
     auto* title = new QLabel(Lang::tr("ECUALIZADOR"), inner);
     QFont titleFont = Theme::uiFont(8, QFont::DemiBold);
@@ -93,7 +98,7 @@ void EqualizerPanel::buildUi()
 
     m_presets = new QComboBox(inner);
     m_presets->setFont(Theme::uiFont(9));
-    m_presets->setFixedWidth(130);
+    m_presets->setFixedWidth(112);
     header->addWidget(m_presets);
     connect(m_presets, &QComboBox::currentIndexChanged, this, &EqualizerPanel::applyPreset);
 
@@ -168,6 +173,18 @@ void EqualizerPanel::buildUi()
     });
 
     refreshPresetList();
+}
+
+void EqualizerPanel::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+
+    // La cabecera lleva titulo, interruptor, presets, tres botones y una pista
+    // de uso. Cuando la columna se estrecha -- ventana pequena, o el rack de
+    // efectos reclamando su ancho -- lo primero que sobra es la pista: el plot
+    // ya explica los mismos gestos en su tooltip.
+    if (m_hint && m_inner)
+        m_hint->setVisible(m_inner->width() >= 860);
 }
 
 void EqualizerPanel::setRackOpen(bool open)
