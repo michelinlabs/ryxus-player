@@ -1,6 +1,6 @@
 # Componentes de terceros
 
-El código propio de Roxas Player está bajo licencia MIT (ver `LICENSE`). Los
+El código propio de Ryxus Player está bajo licencia MIT (ver `LICENSE`). Los
 componentes de terceros que usa conservan la suya:
 
 ## Qt 6
@@ -9,7 +9,7 @@ componentes de terceros que usa conservan la suya:
 - Sitio: https://www.qt.io — código: https://code.qt.io
 - Uso: enlazado **dinámicamente**. Las bibliotecas de Qt se distribuyen como
   DLL independientes junto al ejecutable, de modo que se pueden reemplazar por
-  otra compilación de Qt de la misma versión sin recompilar Roxas Player, tal
+  otra compilación de Qt de la misma versión sin recompilar Ryxus Player, tal
   como exige la LGPL.
 - Los binarios publicados en *Releases* incluyen Qt 6.8.3. El código fuente de
   esa versión está disponible en https://download.qt.io/archive/qt/6.8/6.8.3/

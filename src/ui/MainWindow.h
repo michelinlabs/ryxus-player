@@ -54,6 +54,7 @@ private slots:
     // --- biblioteca --------------------------------------------------------
     void onFolderSelected(const QString& folder);
     void onFolderActivated(const QString& folder);
+    void onFolderPlayRequested(const QString& folder);
     void onScanBatch(const QVector<TrackInfo>& tracks, quint64 requestId);
     void onScanFinished(const QString& folder, int total, quint64 requestId);
 
@@ -101,6 +102,11 @@ private:
     void saveSession();
 
     void applyBackgroundSettings();
+
+    // Maximizado propio contra el area de trabajo, y rescate de la ventana
+    // cuando la sesion anterior la dejo fuera de ella. Ver toggleMaximized().
+    bool isWindowMaximized() const { return m_manualMaximized || isMaximized(); }
+    void clampIntoWorkArea();
     void repaintForTransparency();
     void loadTrackIntoUi(const TrackInfo& info);
     void refreshTrackEverywhere(const TrackInfo& info);
@@ -149,4 +155,8 @@ private:
     // Redimensionado de la ventana sin marco.
     Qt::Edges m_hoverEdges;
     bool      m_cursorOverridden = false;
+
+    // Maximizado a mano: geometria a la que se vuelve al restaurar.
+    QRect m_restoreGeometry;
+    bool  m_manualMaximized = false;
 };

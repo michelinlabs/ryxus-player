@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RoxasPlayer VERSION 1.1.0 LANGUAGES CXX)
+project(RyxusPlayer VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,7 @@ find_package(taglib CONFIG REQUIRED)
 
 qt_standard_project_setup()
 
-set(ROXAS_SOURCES
+set(RYXUS_SOURCES
     src/main.cpp
 
     src/core/Effects.h              src/core/Effects.cpp
@@ -39,6 +39,7 @@ set(ROXAS_SOURCES
     src/ui/TitleBar.h               src/ui/TitleBar.cpp
     src/ui/NowPlayingPanel.h        src/ui/NowPlayingPanel.cpp
     src/ui/CoverArtView.h           src/ui/CoverArtView.cpp
+    src/ui/CoverCropDialog.h        src/ui/CoverCropDialog.cpp
     src/ui/MetadataEditor.h         src/ui/MetadataEditor.cpp
     src/ui/NowPlayingHeader.h       src/ui/NowPlayingHeader.cpp
     src/ui/RatingBar.h              src/ui/RatingBar.cpp
@@ -63,45 +64,45 @@ set(ROXAS_SOURCES
 
 # Recurso de Windows: icono del ejecutable y metadatos de version.
 if(WIN32)
-    list(APPEND ROXAS_SOURCES res/roxas.rc)
+    list(APPEND RYXUS_SOURCES res/ryxus.rc)
 endif()
 
-qt_add_executable(RoxasPlayer WIN32 ${ROXAS_SOURCES})
+qt_add_executable(RyxusPlayer WIN32 ${RYXUS_SOURCES})
 
 # La hoja de estilos se empaqueta con qt_add_resources y NO dejandola caer en
 # la lista de fuentes: qt_standard_project_setup() activa AUTOMOC y AUTOUIC,
 # pero no AUTORCC, asi que un .qrc suelto se compilaria... nunca. Ademas asi
 # CMake sabe que editar el .qss obliga a reconstruir el recurso.
-qt_add_resources(RoxasPlayer "roxas_assets"
+qt_add_resources(RyxusPlayer "ryxus_assets"
     PREFIX "/res"
     BASE   "res"
-    FILES  res/roxas.qss
-           res/roxas.ico)
+    FILES  res/ryxus.qss
+           res/ryxus.ico)
 
-target_include_directories(RoxasPlayer PRIVATE
+target_include_directories(RyxusPlayer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-target_link_libraries(RoxasPlayer PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(RyxusPlayer PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # API del shell (SHOpenFolderAndSelectItems) para el boton "Ubicacion".
 if(WIN32)
-    target_link_libraries(RoxasPlayer PRIVATE shell32 ole32)
+    target_link_libraries(RyxusPlayer PRIVATE shell32 ole32)
 endif()
 
 # TagLib exports different target names across 1.x / 2.x packagings.
 if(TARGET TagLib::tag)
-    target_link_libraries(RoxasPlayer PRIVATE TagLib::tag)
+    target_link_libraries(RyxusPlayer PRIVATE TagLib::tag)
 elseif(TARGET TagLib::TagLib)
-    target_link_libraries(RoxasPlayer PRIVATE TagLib::TagLib)
+    target_link_libraries(RyxusPlayer PRIVATE TagLib::TagLib)
 elseif(TARGET tag)
-    target_link_libraries(RoxasPlayer PRIVATE tag)
+    target_link_libraries(RyxusPlayer PRIVATE tag)
 else()
     message(FATAL_ERROR "TagLib fue encontrado pero no expone un target conocido")
 endif()
 
-set_target_properties(RoxasPlayer PROPERTIES
-    OUTPUT_NAME "RoxasPlayer"
+set_target_properties(RyxusPlayer PROPERTIES
+    OUTPUT_NAME "RyxusPlayer"
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # --- despliegue de DLLs de Qt junto al ejecutable -------------------------
@@ -110,10 +111,10 @@ if(WIN32)
     get_filename_component(_qt_bin "${_qt_qmake}" DIRECTORY)
     find_program(WINDEPLOYQT_EXE windeployqt HINTS "${_qt_bin}")
     if(WINDEPLOYQT_EXE)
-        add_custom_command(TARGET RoxasPlayer POST_BUILD
+        add_custom_command(TARGET RyxusPlayer POST_BUILD
             COMMAND "${WINDEPLOYQT_EXE}" --no-translations --no-system-d3d-compiler
                     --no-opengl-sw --no-compiler-runtime
-                    "$<TARGET_FILE:RoxasPlayer>"
+                    "$<TARGET_FILE:RyxusPlayer>"
             COMMENT "windeployqt -> bin/")
     endif()
 endif()
@@ -165,20 +166,20 @@ if(WIN32)
               "$ENV{ProgramFiles\(x86\)}/Inno Setup 6"
               "$ENV{ProgramFiles}/Inno Setup 6")
 
-    set(ROXAS_STAGE_DIR "${CMAKE_BINARY_DIR}/stage")
-    set(ROXAS_INSTALLER_DIR "${CMAKE_BINARY_DIR}/installer")
+    set(RYXUS_STAGE_DIR "${CMAKE_BINARY_DIR}/stage")
+    set(RYXUS_INSTALLER_DIR "${CMAKE_BINARY_DIR}/installer")
 
-    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/RoxasPlayer.iss.in"
-                   "${CMAKE_BINARY_DIR}/RoxasPlayer.iss" @ONLY)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/RyxusPlayer.iss.in"
+                   "${CMAKE_BINARY_DIR}/RyxusPlayer.iss" @ONLY)
 
     if(ISCC_EXE)
         add_custom_target(installer
-            COMMAND ${CMAKE_COMMAND} -E rm -rf "${ROXAS_STAGE_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${RYXUS_STAGE_DIR}"
             COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}"
-                                     --prefix "${ROXAS_STAGE_DIR}"
+                                     --prefix "${RYXUS_STAGE_DIR}"
                                      --config $<CONFIG>
-            COMMAND "${ISCC_EXE}" /Q "${CMAKE_BINARY_DIR}/RoxasPlayer.iss"
-            DEPENDS RoxasPlayer
+            COMMAND "${ISCC_EXE}" /Q "${CMAKE_BINARY_DIR}/RyxusPlayer.iss"
+            DEPENDS RyxusPlayer
             COMMENT "Construyendo el instalador de Windows"
             VERBATIM)
     else()

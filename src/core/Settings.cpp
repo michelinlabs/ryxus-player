@@ -1,5 +1,6 @@
 #include "core/Settings.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -76,23 +77,33 @@ EqPreset makePreset(const char* name, std::initializer_list<float> gains, float 
     return preset;
 }
 
-// El reproductor se llamaba Ryxus Player. Si quedan ajustes de aquel nombre y
-// todavia no hay archivo con el nuevo, se copian: cambiar el nombre no deberia
-// costarle al usuario sus temas, listas y carpetas.
+// El reproductor se llamo Ryxus Player, luego Roxas Player, y ahora vuelve a
+// llamarse Ryxus Player. Cambiar de nombre no deberia costarle al usuario sus
+// temas, listas y carpetas, asi que los ajustes guardados bajo el nombre
+// anterior se traen al actual.
+//
+// Ojo con el detalle de haber vuelto al nombre de origen: en un equipo que
+// venga de la primera epoca puede haber YA un RyxusPlayer.ini, viejo y
+// abandonado, que no es el que hay que conservar. Por eso no vale la regla
+// habitual de "copiar solo si no existe el destino": gana el mas reciente.
 void migrateLegacySettings()
 {
-    const QSettings target(QSettings::IniFormat, QSettings::UserScope,
-                           QStringLiteral("Roxas"), QStringLiteral("RoxasPlayer"));
-    if (QFile::exists(target.fileName()))
-        return;
+    const QSettings current(QSettings::IniFormat, QSettings::UserScope,
+                            QStringLiteral("Ryxus"), QStringLiteral("RyxusPlayer"));
+    const QSettings previous(QSettings::IniFormat, QSettings::UserScope,
+                             QStringLiteral("Roxas"), QStringLiteral("RoxasPlayer"));
 
-    const QSettings legacy(QSettings::IniFormat, QSettings::UserScope,
-                           QStringLiteral("Ryxus"), QStringLiteral("RyxusPlayer"));
-    if (!QFile::exists(legacy.fileName()))
-        return;
+    const QFileInfo target(current.fileName());
+    const QFileInfo legacy(previous.fileName());
 
-    QDir().mkpath(QFileInfo(target.fileName()).absolutePath());
-    QFile::copy(legacy.fileName(), target.fileName());
+    if (!legacy.exists())
+        return;
+    if (target.exists() && target.lastModified() >= legacy.lastModified())
+        return;   // ya migrado, o lo que hay es mas nuevo
+
+    QDir().mkpath(target.absolutePath());
+    QFile::remove(target.absoluteFilePath());
+    QFile::copy(legacy.absoluteFilePath(), target.absoluteFilePath());
 }
 
 // Se ejecuta una sola vez, antes de que se construya el QSettings de store().
@@ -111,7 +122,7 @@ QSettings& store()
 {
     ensureMigrated();
     static QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                              QStringLiteral("Roxas"), QStringLiteral("RoxasPlayer"));
+                              QStringLiteral("Ryxus"), QStringLiteral("RyxusPlayer"));
     return settings;
 }
 

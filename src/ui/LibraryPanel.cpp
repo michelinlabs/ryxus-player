@@ -9,6 +9,7 @@
 
 #include <QDir>
 #include <QFileDialog>
+#include <QGuiApplication>
 #include <QFileIconProvider>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -23,6 +24,10 @@ namespace {
 constexpr int kPathRole    = Qt::UserRole + 1;
 constexpr int kLoadedRole  = Qt::UserRole + 2;
 constexpr int kIsRootRole  = Qt::UserRole + 3;
+
+// Tope de nodos que despliega un doble clic. Sin el, hacerlo sobre una raiz
+// con miles de subcarpetas dejaria la interfaz colgada recorriendo el disco.
+constexpr int kExpandBudget = 800;
 
 } // namespace
 
@@ -291,8 +296,31 @@ void LibraryPanel::onItemExpanded(QTreeWidgetItem* item)
 void LibraryPanel::onItemDoubleClicked(QTreeWidgetItem* item, int)
 {
     const QString path = pathOf(item);
-    if (!path.isEmpty())
-        emit folderActivated(path);
+    if (path.isEmpty())
+        return;
+
+    // Un doble clic abre la rama entera, no solo el primer nivel. Como el
+    // arbol se llena de forma perezosa, hay que ir poblando a medida que se
+    // baja.
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    int budget = kExpandBudget;
+    expandBranch(item, budget);
+    QGuiApplication::restoreOverrideCursor();
+
+    emit folderActivated(path);
+}
+
+void LibraryPanel::expandBranch(QTreeWidgetItem* item, int& budget)
+{
+    if (!item || budget <= 0)
+        return;
+    --budget;
+
+    populate(item);
+    item->setExpanded(true);
+
+    for (int i = 0; i < item->childCount(); ++i)
+        expandBranch(item->child(i), budget);
 }
 
 void LibraryPanel::onSelectionChanged()
@@ -470,7 +498,7 @@ void LibraryPanel::showTreeContextMenu(const QPoint& pos)
 
     QAction* chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos));
     if (chosen == play) {
-        emit folderActivated(path);
+        emit folderPlayRequested(path);
     } else if (chosen == refresh) {
         const bool wasExpanded = item->isExpanded();
         item->takeChildren();

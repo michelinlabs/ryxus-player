@@ -19,10 +19,10 @@ const QHash<QString, QString>& englishTable()
         {QStringLiteral("Abrir carpeta..."),           QStringLiteral("Open folder...")},
         {QStringLiteral("Configuracion..."),           QStringLiteral("Settings...")},
         {QStringLiteral("Salir"),                      QStringLiteral("Quit")},
-        {QStringLiteral("Desinstalar Roxas Player..."),
-         QStringLiteral("Uninstall Roxas Player...")},
-        {QStringLiteral("Desinstalar Roxas Player"),
-         QStringLiteral("Uninstall Roxas Player")},
+        {QStringLiteral("Desinstalar Ryxus Player..."),
+         QStringLiteral("Uninstall Ryxus Player...")},
+        {QStringLiteral("Desinstalar Ryxus Player"),
+         QStringLiteral("Uninstall Ryxus Player")},
         {QStringLiteral("Se cerrara el reproductor y se abrira el desinstalador de "
                         "Windows.\n\n"
                         "Tus ajustes, temas y listas no se borran: si vuelves a "
@@ -175,6 +175,46 @@ const QHash<QString, QString>& englishTable()
 
         // --- ecualizador --------------------------------------------------
         {QStringLiteral("ECUALIZADOR"),                QStringLiteral("EQUALIZER")},
+        // --- editor de etiquetas: campos ampliados -------------------------
+        {QStringLiteral("PRINCIPAL"),                     QStringLiteral("MAIN")},
+        {QStringLiteral("BPM"),                           QStringLiteral("BPM")},
+        {QStringLiteral("Clave"),                         QStringLiteral("Key")},
+        {QStringLiteral("Parte de una compilacion"),      QStringLiteral("Part of a compilation")},
+        {QStringLiteral("Extendida"),                     QStringLiteral("Extended")},
+        {QStringLiteral("Mostrar el resto de etiquetas que admite el archivo"), QStringLiteral("Show the rest of the tags the file supports")},
+        {QStringLiteral("Artista original"),              QStringLiteral("Original artist")},
+        {QStringLiteral("Mezcla por"),                    QStringLiteral("Remixed by")},
+        {QStringLiteral("Director"),                      QStringLiteral("Conductor")},
+        {QStringLiteral("Agrupacion"),                    QStringLiteral("Grouping")},
+        {QStringLiteral("Subtitulo"),                     QStringLiteral("Subtitle")},
+        {QStringLiteral("Editora"),                       QStringLiteral("Label")},
+        {QStringLiteral("Derechos"),                      QStringLiteral("Copyright")},
+        {QStringLiteral("Codificador"),                   QStringLiteral("Encoded by")},
+
+        // --- lista de reproduccion y carpetas ------------------------------
+        {QStringLiteral("Vaciar"),                     QStringLiteral("Clear")},
+        {QStringLiteral("Quitar todas las pistas de la lista"),
+         QStringLiteral("Remove every track from the list")},
+        {QStringLiteral("Vaciar la lista"),            QStringLiteral("Clear the list")},
+        {QStringLiteral("Se quitaran %1 pista(s) de la lista.\n"
+                        "Los archivos no se tocan."),
+         QStringLiteral("%1 track(s) will be removed from the list.\n"
+                        "The files themselves are left alone.")},
+        {QStringLiteral("Esta carpeta no tiene pistas que se puedan reproducir."),
+         QStringLiteral("This folder has no playable tracks.")},
+
+        // --- recorte de caratula -------------------------------------------
+        {QStringLiteral("Ajustar la caratula"),        QStringLiteral("Adjust the cover")},
+        {QStringLiteral("Arrastra el cuadro para elegir el encuadre y tira de la esquina\n"
+                        "para cambiar su tamano. La caratula se guarda cuadrada."),
+         QStringLiteral("Drag the box to choose the framing and pull the corner to\n"
+                        "resize it. Cover art is always saved square.")},
+        {QStringLiteral("Resolucion"),                 QStringLiteral("Resolution")},
+        {QStringLiteral("Toda la imagen"),             QStringLiteral("Whole image")},
+        {QStringLiteral("Recorte: %1 x %2 px"),        QStringLiteral("Crop: %1 x %2 px")},
+        {QStringLiteral("Usar esta caratula"),         QStringLiteral("Use this cover")},
+        {QStringLiteral("Cancelar"),                   QStringLiteral("Cancel")},
+
         {QStringLiteral("Ecualizador y efectos"),      QStringLiteral("Equalizer and effects")},
         {QStringLiteral("Ecualizador de 12 bandas y efectos"),
          QStringLiteral("12-band equalizer and effects")},
@@ -269,9 +309,9 @@ const QHash<QString, QString>& englishTable()
          QStringLiteral("The language takes effect when the player restarts.")},
         {QStringLiteral("Reiniciar ahora"),            QStringLiteral("Restart now")},
         {QStringLiteral("Cerrar"),                     QStringLiteral("Close")},
-        {QStringLiteral("Se reiniciara Roxas Player para aplicar el idioma.\n"
+        {QStringLiteral("Se reiniciara Ryxus Player para aplicar el idioma.\n"
                         "Se perdera la reproduccion en curso."),
-         QStringLiteral("Roxas Player will restart to apply the language.\n"
+         QStringLiteral("Ryxus Player will restart to apply the language.\n"
                         "Playback in progress will be lost.")},
 
         // --- avisos y errores ---------------------------------------------

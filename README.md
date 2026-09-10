@@ -1,11 +1,11 @@
-# Roxas Player
+# Ryxus Player
 
 Reproductor de audio de escritorio en C++17 / Qt 6 para Windows: interfaz
 oscura de tres columnas, ecualizador paramétrico de 12 bandas con espectro en
 vivo, rack de efectos y editor de etiquetas que escribe de verdad sobre el
 archivo.
 
-![Roxas Player](docs/screenshot.png)
+![Ryxus Player](docs/screenshot.png)
 
 ---
 
@@ -67,7 +67,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
 cmake --build build
 ```
 
-El ejecutable y las DLL de Qt quedan en `build/bin/RoxasPlayer.exe`
+El ejecutable y las DLL de Qt quedan en `build/bin/RyxusPlayer.exe`
 (`windeployqt` se ejecuta solo al terminar la compilación).
 
 Para instalar las dependencias desde cero:
@@ -82,8 +82,8 @@ vcpkg install taglib:x64-windows
 
 ## Instalar
 
-En [Releases](https://github.com/michelinlabs/roxas-player/releases) hay un
-instalador de Windows: descarga `RoxasPlayer-x.y.z-win64-setup.exe`, ejecutalo
+En [Releases](https://github.com/michelinlabs/ryxus-player/releases) hay un
+instalador de Windows: descarga `RyxusPlayer-x.y.z-win64-setup.exe`, ejecutalo
 y listo. Crea el acceso directo en el menu inicio, se registra en *Programas y
 caracteristicas* para desinstalarlo como cualquier otro programa, y opcional-
 mente asocia los formatos de audio. Si no lo ejecutas como administrador se
@@ -105,9 +105,9 @@ Deja el `.exe` en `build/installer/`.
 ## Usar
 
 ```bat
-RoxasPlayer.exe                          REM abre donde lo dejaste
-RoxasPlayer.exe "D:\musica"              REM abre una carpeta y la reproduce
-RoxasPlayer.exe "tema.flac" "otro.mp3"   REM sirve como "Abrir con..."
+RyxusPlayer.exe                          REM abre donde lo dejaste
+RyxusPlayer.exe "D:\musica"              REM abre una carpeta y la reproduce
+RyxusPlayer.exe "tema.flac" "otro.mp3"   REM sirve como "Abrir con..."
 ```
 
 ### Atajos
@@ -149,14 +149,14 @@ src/core/     Equalizer, AudioEngine, SpectrumAnalyzer, MetadataService,
 src/ui/       MainWindow y los paneles; Theme.h concentra toda la paleta,
               EqCurveEditor es el plot de nodos del ecualizador y
               MetadataEditor la pestaña de edición de etiquetas
-res/          roxas.qss (hoja de estilos con tokens @color), roxas.ico y
-              roxas.rc (icono y metadatos del ejecutable en Windows)
+res/          ryxus.qss (hoja de estilos con tokens @color), ryxus.ico y
+              ryxus.rc (icono y metadatos del ejecutable en Windows)
 installer/    plantilla del instalador de Inno Setup
 third_party/  miniaudio
 ```
 
 La paleta vive en un único sitio, `src/ui/Theme.h`. `Theme::styleSheet()`
-sustituye los tokens `@panel`, `@accent`, etc. de `res/roxas.qss` por los
+sustituye los tokens `@panel`, `@accent`, etc. de `res/ryxus.qss` por los
 colores del tema activo, y emite `rgba()` para los tokens de fondo cuando hay
 una imagen detrás.
 

@@ -29,7 +29,8 @@ public slots:
 
 signals:
     void folderSelected(const QString& path);
-    void folderActivated(const QString& path);   // doble clic
+    void folderActivated(const QString& path);      // doble clic
+    void folderPlayRequested(const QString& path);  // "Reproducir esta carpeta"
     void openedFoldersChanged(const QStringList& folders);
 
 private slots:
@@ -48,6 +49,7 @@ private:
 
     QTreeWidgetItem* addRoot(const QString& path);
     void populate(QTreeWidgetItem* item);
+    void expandBranch(QTreeWidgetItem* item, int& budget);
     static QString pathOf(QTreeWidgetItem* item);
     void filterItem(QTreeWidgetItem* item, const QString& needle);
 

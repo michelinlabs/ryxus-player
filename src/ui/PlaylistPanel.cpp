@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
+#include <QMessageBox>
 #include <QSortFilterProxyModel>
 #include <QVBoxLayout>
 
@@ -49,6 +50,40 @@ void PlaylistPanel::buildUi()
     m_proxy = new QSortFilterProxyModel(this);
     m_proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_proxy->setFilterRole(Qt::DisplayRole);
+
+    // --- fila de cabecera: vaciar la cola ----------------------------------
+    auto* headerRow = new QWidget(this);
+    headerRow->setObjectName(QStringLiteral("playlistHeaderRow"));
+    headerRow->setFixedHeight(26);
+    auto* headerLayout = new QHBoxLayout(headerRow);
+    headerLayout->setContentsMargins(10, 0, 6, 0);
+    headerLayout->setSpacing(6);
+    headerLayout->addStretch(1);
+
+    m_clearButton = new FlatButton(Lang::tr("Vaciar"), headerRow);
+    m_clearButton->setIconId(Icons::Trash);
+    m_clearButton->setGlyphSize(13);
+    m_clearButton->setFixedHeight(20);
+    m_clearButton->setToolTip(Lang::tr("Quitar todas las pistas de la lista"));
+    headerLayout->addWidget(m_clearButton);
+    root->addWidget(headerRow);
+
+    connect(m_clearButton, &FlatButton::clicked, this, [this]() {
+        auto* playlist = currentPlaylist();
+        if (!playlist || playlist->rowCount() == 0)
+            return;
+
+        // Vaciar no se puede deshacer y el boton esta a un clic de distancia,
+        // asi que se pregunta antes.
+        const auto answer = QMessageBox::question(
+            this, Lang::tr("Vaciar la lista"),
+            Lang::tr("Se quitaran %1 pista(s) de la lista.\n"
+                     "Los archivos no se tocan.").arg(playlist->rowCount()),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+
+        if (answer == QMessageBox::Yes)
+            playlist->clearTracks();
+    });
 
     m_view = new QListView(this);
     m_view->setObjectName(QStringLiteral("playlistView"));

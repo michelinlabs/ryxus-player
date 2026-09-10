@@ -13,18 +13,39 @@ struct TrackInfo {
     QString path;
     QString fileName;
 
-    // --- etiquetas editables ----------------------------------------------
+    // --- etiquetas principales ---------------------------------------------
     QString title;
     QString artist;
     QString album;
     QString albumArtist;
     QString genre;
     QString comment;
-    QString composer;
+    QString bpm;               // texto: hay archivos con decimales ("128.00")
+    QString key;               // clave musical (TKEY / INITIALKEY)
     int     year        = 0;
     int     trackNumber = 0;
+    int     trackTotal  = 0;
     int     discNumber  = 0;
+    int     discTotal   = 0;
     int     rating      = 0;   // 0..5 estrellas
+    bool    compilation = false;
+
+    // --- etiquetas extendidas ----------------------------------------------
+    //
+    // Las escribe cualquier etiquetador serio y los formatos las admiten, pero
+    // no caben en la vista principal sin convertirla en un muro de campos: van
+    // en la seccion desplegable del editor.
+    QString composer;
+    QString originalArtist;
+    QString remixer;
+    QString conductor;
+    QString grouping;
+    QString subtitle;
+    QString isrc;
+    QString label;             // editora / sello
+    QString copyright;
+    QString url;
+    QString encodedBy;
 
     // --- propiedades tecnicas (solo lectura) -------------------------------
     QString format;            // "MP3", "FLAC", "WAV", ...

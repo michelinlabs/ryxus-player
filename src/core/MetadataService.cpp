@@ -6,6 +6,8 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 
+#include <initializer_list>
+
 #include <taglib/audioproperties.h>
 #include <taglib/fileref.h>
 #include <taglib/tbytevector.h>
@@ -53,6 +55,38 @@ int leadingNumber(const QString& raw)
     static const QRegularExpression re(QStringLiteral("(\\d+)"));
     const auto m = re.match(raw);
     return m.hasMatch() ? m.captured(1).toInt() : 0;
+}
+
+// La parte de detras de la barra: "8/18" -> 18. Cero si no la lleva.
+int totalAfterSlash(const QString& raw)
+{
+    const int slash = raw.indexOf(QLatin1Char('/'));
+    return slash < 0 ? 0 : leadingNumber(raw.mid(slash + 1));
+}
+
+// Primer valor no vacio de entre varias claves. Los formatos no se ponen de
+// acuerdo en como llamar a algunos campos (TRACKTOTAL frente a TOTALTRACKS,
+// INITIALKEY frente a KEY), asi que se prueban las variantes conocidas.
+QString firstOf(const TagLib::PropertyMap& props,
+                std::initializer_list<const char*> keys)
+{
+    for (const char* key : keys) {
+        const QString value = firstValue(props, key);
+        if (!value.isEmpty())
+            return value;
+    }
+    return QString();
+}
+
+// "3" o "3/12", segun haya total o no. Es la forma que entienden tanto ID3v2
+// (donde va tal cual en TRCK) como los lectores de Vorbis/FLAC.
+QString numberWithTotal(int number, int total)
+{
+    if (number <= 0)
+        return QString();
+    if (total <= 0)
+        return QString::number(number);
+    return QStringLiteral("%1/%2").arg(number).arg(total);
 }
 
 void setOrRemove(TagLib::PropertyMap& props, const char* key, const QString& value)
@@ -144,10 +178,36 @@ TrackInfo read(const QString& path, bool withCover)
     info.albumArtist = firstValue(tags, "ALBUMARTIST");
     info.genre       = firstValue(tags, "GENRE");
     info.comment     = firstValue(tags, "COMMENT");
-    info.composer    = firstValue(tags, "COMPOSER");
+    info.bpm         = firstValue(tags, "BPM");
+    info.key         = firstOf(tags, {"INITIALKEY", "KEY"});
     info.year        = leadingNumber(firstValue(tags, "DATE"));
-    info.trackNumber = leadingNumber(firstValue(tags, "TRACKNUMBER"));
-    info.discNumber  = leadingNumber(firstValue(tags, "DISCNUMBER"));
+
+    const QString track = firstValue(tags, "TRACKNUMBER");
+    const QString disc  = firstValue(tags, "DISCNUMBER");
+    info.trackNumber = leadingNumber(track);
+    info.discNumber  = leadingNumber(disc);
+    info.trackTotal  = totalAfterSlash(track);
+    info.discTotal   = totalAfterSlash(disc);
+    if (info.trackTotal == 0)
+        info.trackTotal = leadingNumber(firstOf(tags, {"TRACKTOTAL", "TOTALTRACKS"}));
+    if (info.discTotal == 0)
+        info.discTotal = leadingNumber(firstOf(tags, {"DISCTOTAL", "TOTALDISCS"}));
+
+    const QString compilation = firstValue(tags, "COMPILATION");
+    info.compilation = (compilation == QLatin1String("1"))
+                    || compilation.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0;
+
+    info.composer       = firstValue(tags, "COMPOSER");
+    info.originalArtist = firstValue(tags, "ORIGINALARTIST");
+    info.remixer        = firstValue(tags, "REMIXER");
+    info.conductor      = firstValue(tags, "CONDUCTOR");
+    info.grouping       = firstValue(tags, "GROUPING");
+    info.subtitle       = firstValue(tags, "SUBTITLE");
+    info.isrc           = firstValue(tags, "ISRC");
+    info.label          = firstOf(tags, {"LABEL", "PUBLISHER"});
+    info.copyright      = firstValue(tags, "COPYRIGHT");
+    info.url            = firstOf(tags, {"URL", "WWWAUDIOFILE"});
+    info.encodedBy      = firstValue(tags, "ENCODEDBY");
 
     const int rating = leadingNumber(firstValue(tags, "RATING"));
     info.rating = qBound(0, rating, 5);
@@ -198,11 +258,33 @@ bool write(const TrackInfo& info, QString* error)
     setOrRemove(props, "ALBUMARTIST", info.albumArtist);
     setOrRemove(props, "GENRE",       info.genre);
     setOrRemove(props, "COMMENT",     info.comment);
-    setOrRemove(props, "COMPOSER",    info.composer);
-    setOrRemoveNumber(props, "DATE",        info.year);
-    setOrRemoveNumber(props, "TRACKNUMBER", info.trackNumber);
-    setOrRemoveNumber(props, "DISCNUMBER",  info.discNumber);
-    setOrRemoveNumber(props, "RATING",      info.rating);
+    setOrRemove(props, "BPM",        info.bpm);
+    setOrRemove(props, "INITIALKEY", info.key);
+    setOrRemoveNumber(props, "DATE", info.year);
+
+    setOrRemove(props, "TRACKNUMBER", numberWithTotal(info.trackNumber, info.trackTotal));
+    setOrRemove(props, "DISCNUMBER",  numberWithTotal(info.discNumber,  info.discTotal));
+
+    // El total viaja dentro de TRACKNUMBER: se quitan las claves sueltas para
+    // no dejar dos verdades distintas dentro del mismo archivo.
+    for (const char* key : {"TRACKTOTAL", "TOTALTRACKS", "DISCTOTAL", "TOTALDISCS"})
+        props.erase(TagLib::String(key));
+
+    setOrRemove(props, "COMPILATION", info.compilation ? QStringLiteral("1") : QString());
+
+    setOrRemove(props, "COMPOSER",       info.composer);
+    setOrRemove(props, "ORIGINALARTIST", info.originalArtist);
+    setOrRemove(props, "REMIXER",        info.remixer);
+    setOrRemove(props, "CONDUCTOR",      info.conductor);
+    setOrRemove(props, "GROUPING",       info.grouping);
+    setOrRemove(props, "SUBTITLE",       info.subtitle);
+    setOrRemove(props, "ISRC",           info.isrc);
+    setOrRemove(props, "LABEL",          info.label);
+    setOrRemove(props, "COPYRIGHT",      info.copyright);
+    setOrRemove(props, "URL",            info.url);
+    setOrRemove(props, "ENCODEDBY",      info.encodedBy);
+
+    setOrRemoveNumber(props, "RATING", info.rating);
 
     file.setProperties(props);
 
@@ -231,9 +313,11 @@ bool writeCover(const QString& path, const QImage& cover, QString* error)
     if (!cover.isNull()) {
         // Se normaliza a JPEG 600x600: es lo que aceptan todos los formatos
         // de etiqueta y mantiene el archivo en un tamano razonable.
+        // Tope de 1200 px: es la resolucion mas alta que ofrece el dialogo de
+        // recorte, y por encima de eso la caratula solo engorda el archivo.
         QImage scaled = cover;
-        if (scaled.width() > 600 || scaled.height() > 600)
-            scaled = scaled.scaled(600, 600, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        if (scaled.width() > 1200 || scaled.height() > 1200)
+            scaled = scaled.scaled(1200, 1200, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
         QByteArray bytes;
         QBuffer buffer(&bytes);

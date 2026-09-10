@@ -1,5 +1,5 @@
 /* ===========================================================================
-   Roxas Player - hoja de estilos
+   Ryxus Player - hoja de estilos
    Los tokens @nombre los sustituye Theme::styleSheet() por los colores
    muestreados del skin de referencia, de modo que la paleta vive en un
    unico sitio (src/ui/Theme.h).
