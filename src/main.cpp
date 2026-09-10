@@ -1,6 +1,7 @@
 #include "core/Lang.h"
 #include "core/Settings.h"
 #include "core/TrackInfo.h"
+#include "core/UiScale.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
@@ -10,10 +11,14 @@
 
 int main(int argc, char* argv[])
 {
+    // Antes que nada: Qt lee el factor de escala al inicializar la GUI, asi
+    // que ajustarlo despues de construir QApplication no serviria de nada.
+    UiScale::applyForCurrentScreen();
+
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Ryxus Player"));
     app.setApplicationDisplayName(QStringLiteral("Ryxus Player"));
-    app.setApplicationVersion(QStringLiteral("1.0.0"));
+    app.setApplicationVersion(QStringLiteral(RYXUS_VERSION));
     app.setOrganizationName(QStringLiteral("Ryxus"));
     // Mismo icono que lleva embebido el ejecutable (res/ryxus.rc), asi la
     // ventana, la barra de tareas y el Explorador muestran lo mismo.

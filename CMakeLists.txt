@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RyxusPlayer VERSION 1.2.0 LANGUAGES CXX)
+project(RyxusPlayer VERSION 1.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +24,7 @@ set(RYXUS_SOURCES
     src/core/Lang.h                 src/core/Lang.cpp
     src/core/AudioEngine.h          src/core/AudioEngine.cpp
     src/core/TrackInfo.h            src/core/TrackInfo.cpp
+    src/core/UiScale.h              src/core/UiScale.cpp
     src/core/MetadataService.h      src/core/MetadataService.cpp
     src/core/PlaylistModel.h        src/core/PlaylistModel.cpp
     src/core/WaveformWorker.h       src/core/WaveformWorker.cpp
@@ -82,6 +83,11 @@ qt_add_resources(RyxusPlayer "ryxus_assets"
 target_include_directories(RyxusPlayer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+
+# La version sale del propio proyecto: escrita a mano en el codigo se quedaba
+# atras en cada release.
+target_compile_definitions(RyxusPlayer PRIVATE
+    RYXUS_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(RyxusPlayer PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
 

@@ -26,6 +26,10 @@ public:
     void loadFromSettings();
     void resetAll();
 
+    // La rejilla entera. Sin esto el ecualizador se queda con su ancho maximo
+    // y el rack acaba desplazandose aunque hubiera sitio de sobra.
+    QSize sizeHint() const override;
+
 signals:
     void activityChanged(bool anyEnabled);   // hay algun efecto encendido
 
