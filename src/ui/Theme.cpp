@@ -170,7 +170,7 @@ QFont uiFont(int pointSize, QFont::Weight weight)
 
 QString styleSheet()
 {
-    QFile f(QStringLiteral(":/res/roxas.qss"));
+    QFile f(QStringLiteral(":/res/ryxus.qss"));
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
         return QString();
     QString qss = QString::fromUtf8(f.readAll());

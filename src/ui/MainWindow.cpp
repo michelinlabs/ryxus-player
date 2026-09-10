@@ -7,6 +7,7 @@
 #include "core/ShellUtils.h"
 #include "core/WaveformWorker.h"
 #include "ui/BackgroundHost.h"
+#include "ui/CoverCropDialog.h"
 #include "ui/EqCurveEditor.h"
 #include "ui/EqualizerPanel.h"
 #include "ui/FileListPanel.h"
@@ -31,9 +32,11 @@
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QScreen>
 #include <QMouseEvent>
 #include <QProcess>
 #include <QSettings>
@@ -68,7 +71,7 @@ QString uninstallerPath()
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    setWindowTitle(QStringLiteral("Roxas Player"));
+    setWindowTitle(QStringLiteral("Ryxus Player"));
     setWindowFlag(Qt::FramelessWindowHint, true);
     setAttribute(Qt::WA_TranslucentBackground, false);
     setMinimumSize(1100, 640);
@@ -81,7 +84,7 @@ MainWindow::MainWindow(QWidget* parent)
     restoreSession();
 
     if (!m_engine->isInitialized()) {
-        QMessageBox::warning(this, QStringLiteral("Roxas Player"),
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
                              Lang::tr("%1\n\nLa interfaz funciona, pero no habra sonido.")
                                  .arg(m_engine->lastError()));
     }
@@ -261,6 +264,8 @@ void MainWindow::wireSignals()
     // --- biblioteca --------------------------------------------------------
     connect(m_library, &LibraryPanel::folderSelected,  this, &MainWindow::onFolderSelected);
     connect(m_library, &LibraryPanel::folderActivated, this, &MainWindow::onFolderActivated);
+    connect(m_library, &LibraryPanel::folderPlayRequested,
+            this, &MainWindow::onFolderPlayRequested);
 
     m_scannerThread = new QThread(this);
     m_scanner = new LibraryScanner;
@@ -466,6 +471,8 @@ void MainWindow::restoreSession()
     else
         resize(1600, 860);
 
+    clampIntoWorkArea();
+
     const QByteArray splitter = Settings::splitterState();
     if (!splitter.isEmpty())
         m_centerSplitter->restoreState(splitter);
@@ -542,7 +549,7 @@ void MainWindow::playPlaylistRow(int row)
     const TrackInfo& stored = playlist->trackAt(row);
 
     if (!m_engine->open(stored.path)) {
-        QMessageBox::warning(this, QStringLiteral("Roxas Player"), m_engine->lastError());
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"), m_engine->lastError());
         return;
     }
 
@@ -574,7 +581,7 @@ void MainWindow::loadTrackIntoUi(const TrackInfo& info)
     seek->setDurationMs(m_engine->durationMs());
     seek->setPositionMs(0);
 
-    setWindowTitle(QStringLiteral("%1 - Roxas Player").arg(info.displayName()));
+    setWindowTitle(QStringLiteral("%1 - Ryxus Player").arg(info.displayName()));
 
     // El analisis de la onda ocurre en su propio hilo.
     QMetaObject::invokeMethod(m_waveformWorker, "analyze", Qt::QueuedConnection,
@@ -689,6 +696,45 @@ void MainWindow::onFolderActivated(const QString& folder)
     // Las pistas llegan por lotes; se encolan segun van apareciendo.
 }
 
+void MainWindow::onFolderPlayRequested(const QString& folder)
+{
+    auto* playlist = m_playlists->currentPlaylist();
+    if (folder.isEmpty() || !playlist)
+        return;
+
+    // En el mismo orden en que se ven en la lista central.
+    const QFileInfoList entries = QDir(folder).entryInfoList(
+        QDir::Files | QDir::Readable, QDir::Name | QDir::LocaleAware);
+
+    QVector<TrackInfo> tracks;
+    tracks.reserve(entries.size());
+
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    for (const QFileInfo& entry : entries) {
+        const QString path = entry.absoluteFilePath();
+        if (!TrackInfo::isSupported(path))
+            continue;
+        // Sin caratula: la lista no la muestra y leerla multiplicaria el coste.
+        const TrackInfo info = MetadataService::read(path, false);
+        if (info.isValid())
+            tracks << info;
+    }
+    QGuiApplication::restoreOverrideCursor();
+
+    if (tracks.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Ryxus Player"),
+                                 Lang::tr("Esta carpeta no tiene pistas que se puedan reproducir."));
+        return;
+    }
+
+    // A la cabecera de la cola, no al final: lo que ya habia sigue detras.
+    playlist->insertTracks(0, tracks);
+
+    // La lista central acompana a lo que se acaba de poner a sonar.
+    onFolderSelected(folder);
+    playPlaylistRow(0);
+}
+
 void MainWindow::onScanBatch(const QVector<TrackInfo>& tracks, quint64 requestId)
 {
     if (requestId != m_scanRequestId)
@@ -726,7 +772,7 @@ void MainWindow::onSaveMetadata(const TrackInfo& info)
     if (reloaded.path.compare(m_currentTrack.path, Qt::CaseInsensitive) == 0) {
         m_currentTrack = reloaded;
         m_nowPlaying->setPlayingTrack(reloaded);
-        setWindowTitle(QStringLiteral("%1 - Roxas Player").arg(reloaded.displayName()));
+        setWindowTitle(QStringLiteral("%1 - Ryxus Player").arg(reloaded.displayName()));
     }
 }
 
@@ -770,10 +816,21 @@ void MainWindow::onCoverChangeRequested()
 
     QImage image(file);
     if (image.isNull()) {
-        QMessageBox::warning(this, QStringLiteral("Roxas Player"),
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
                              Lang::tr("No se pudo leer la imagen."));
         return;
     }
+
+    // Las caratulas se muestran cuadradas: una foto apaisada metida tal cual
+    // sale deformada. Antes de escribir nada se elige el encuadre y a que
+    // resolucion se guarda.
+    CoverCropDialog crop(image, this);
+    if (crop.exec() != QDialog::Accepted)
+        return;
+
+    image = crop.result();
+    if (image.isNull())
+        return;
 
     QString error;
     if (!MetadataService::writeCover(target.path, image, &error)) {
@@ -828,7 +885,7 @@ void MainWindow::onCoverExportRequested()
     if (file.isEmpty())
         return;
     if (!target.cover.save(file))
-        QMessageBox::warning(this, QStringLiteral("Roxas Player"),
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
                              Lang::tr("No se pudo escribir el archivo."));
 }
 
@@ -927,7 +984,7 @@ void MainWindow::runUninstaller()
         return;
 
     const auto answer = QMessageBox::question(
-        this, Lang::tr("Desinstalar Roxas Player"),
+        this, Lang::tr("Desinstalar Ryxus Player"),
         Lang::tr("Se cerrara el reproductor y se abrira el desinstalador de "
                  "Windows.\n\n"
                  "Tus ajustes, temas y listas no se borran: si vuelves a "
@@ -975,7 +1032,7 @@ void MainWindow::deleteFilesPermanently(const QVector<TrackInfo>& tracks)
     }
 
     if (!failures.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("Roxas Player"),
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
                              Lang::tr("No se pudieron eliminar:\n%1")
                                  .arg(failures.join(QLatin1Char('\n'))));
     }
@@ -1099,7 +1156,7 @@ void MainWindow::chooseBackgroundImage()
         return;
 
     if (!m_background->setImagePath(file)) {
-        QMessageBox::warning(this, QStringLiteral("Roxas Player"),
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
                              Lang::tr("No se pudo leer la imagen."));
         return;
     }
@@ -1154,7 +1211,7 @@ void MainWindow::openSettings()
                         return;
                     }
                     if (!m_background->setImagePath(path)) {
-                        QMessageBox::warning(this, QStringLiteral("Roxas Player"),
+                        QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
                                              Lang::tr("No se pudo leer la imagen."));
                         return;
                     }
@@ -1193,8 +1250,8 @@ void MainWindow::applyTheme(const QString& paletteId)
 void MainWindow::restartForLanguage()
 {
     const auto answer = QMessageBox::question(
-        this, QStringLiteral("Roxas Player"),
-        Lang::tr("Se reiniciara Roxas Player para aplicar el idioma.\n"
+        this, QStringLiteral("Ryxus Player"),
+        Lang::tr("Se reiniciara Ryxus Player para aplicar el idioma.\n"
                  "Se perdera la reproduccion en curso."),
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok);
 
@@ -1333,7 +1390,7 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
     // "Aplicaciones instaladas" de Windows.
     if (!uninstallerPath().isEmpty()) {
         menu.addAction(Icons::icon(Icons::Trash, iconColor),
-                       Lang::tr("Desinstalar Roxas Player..."),
+                       Lang::tr("Desinstalar Ryxus Player..."),
                        this, &MainWindow::runUninstaller);
         menu.addSeparator();
     }
@@ -1348,11 +1405,48 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
 
 void MainWindow::toggleMaximized()
 {
-    if (isMaximized())
-        showNormal();
-    else
-        showMaximized();
-    m_titleBar->setMaximized(isMaximized());
+    // Una ventana sin marco maximizada con showMaximized() tapa la barra de
+    // tareas: Windows solo le descuenta el area de trabajo a las ventanas que
+    // llevan marco. Se maximiza a mano contra availableGeometry(), que ya
+    // descuenta la barra este donde este -- arriba, abajo o a un lado -- y del
+    // grosor que sea.
+    if (isMaximized()) {
+        showNormal();                 // veniamos de un maximizado del sistema
+    } else if (m_manualMaximized) {
+        setGeometry(m_restoreGeometry);
+        m_manualMaximized = false;
+    } else if (QScreen* target = screen()) {
+        m_restoreGeometry = geometry();
+        setGeometry(target->availableGeometry());
+        m_manualMaximized = true;
+    }
+
+    m_titleBar->setMaximized(isWindowMaximized());
+}
+
+void MainWindow::clampIntoWorkArea()
+{
+    QScreen* target = screen();
+    if (!target)
+        return;
+
+    const QRect work = target->availableGeometry();
+    QRect frame = frameGeometry();
+
+    // La barra de titulo propia es la unica forma de mover, minimizar o cerrar
+    // la ventana. Si la sesion anterior la dejo fuera del area util -- porque
+    // la barra de tareas esta arriba, o porque cambio la resolucion -- quedaria
+    // debajo de la barra y sin manera de agarrarla.
+    frame.setWidth(qMin(frame.width(), work.width()));
+    frame.setHeight(qMin(frame.height(), work.height()));
+
+    if (frame.left() < work.left())     frame.moveLeft(work.left());
+    if (frame.top() < work.top())       frame.moveTop(work.top());
+    if (frame.right() > work.right())   frame.moveRight(work.right());
+    if (frame.bottom() > work.bottom()) frame.moveBottom(work.bottom());
+
+    if (frame != frameGeometry())
+        setGeometry(frame);
 }
 
 void MainWindow::toggleEqualizerPanel(bool visible)
@@ -1380,7 +1474,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // La ventana no tiene marco, asi que el borde sensible al redimensionado
     // se detecta a mano. El filtro es global porque los paneles hijos se
     // comen los eventos de raton antes de que lleguen a la ventana.
-    if (isMaximized() || isFullScreen())
+    if (isWindowMaximized() || isFullScreen())
         return QMainWindow::eventFilter(watched, event);
 
     const auto restoreCursor = [this]() {

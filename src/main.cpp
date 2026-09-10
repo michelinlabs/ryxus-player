@@ -11,13 +11,13 @@
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("Roxas Player"));
-    app.setApplicationDisplayName(QStringLiteral("Roxas Player"));
+    app.setApplicationName(QStringLiteral("Ryxus Player"));
+    app.setApplicationDisplayName(QStringLiteral("Ryxus Player"));
     app.setApplicationVersion(QStringLiteral("1.0.0"));
-    app.setOrganizationName(QStringLiteral("Roxas"));
-    // Mismo icono que lleva embebido el ejecutable (res/roxas.rc), asi la
+    app.setOrganizationName(QStringLiteral("Ryxus"));
+    // Mismo icono que lleva embebido el ejecutable (res/ryxus.rc), asi la
     // ventana, la barra de tareas y el Explorador muestran lo mismo.
-    app.setWindowIcon(QIcon(QStringLiteral(":/res/roxas.ico")));
+    app.setWindowIcon(QIcon(QStringLiteral(":/res/ryxus.ico")));
 
     // TrackInfo viaja entre el hilo de escaneo y el de interfaz.
     qRegisterMetaType<TrackInfo>("TrackInfo");

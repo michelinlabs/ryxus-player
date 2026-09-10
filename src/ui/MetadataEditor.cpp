@@ -8,13 +8,67 @@
 #include "ui/RatingBar.h"
 #include "ui/Theme.h"
 
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QVBoxLayout>
+
+#include <utility>
+
+const QVector<MetadataEditor::TextField>& MetadataEditor::textFields()
+{
+    // El orden es el del formulario. Los marcados como extendidos van a la
+    // seccion desplegable.
+    static const QVector<TextField> fields = {
+        {"Titulo",            &TrackInfo::title,          false},
+        {"Artista",           &TrackInfo::artist,         false},
+        {"Album",             &TrackInfo::album,          false},
+        {"Artista del album", &TrackInfo::albumArtist,    false},
+        {"Genero",            &TrackInfo::genre,          false},
+        {"BPM",               &TrackInfo::bpm,            false},
+        {"Clave",             &TrackInfo::key,            false},
+
+        {"Artista original",  &TrackInfo::originalArtist, true},
+        {"Mezcla por",        &TrackInfo::remixer,        true},
+        {"Compositor",        &TrackInfo::composer,       true},
+        {"Director",          &TrackInfo::conductor,      true},
+        {"Agrupacion",        &TrackInfo::grouping,       true},
+        {"Subtitulo",         &TrackInfo::subtitle,       true},
+        {"ISRC",              &TrackInfo::isrc,           true},
+        {"Editora",           &TrackInfo::label,          true},
+        {"Derechos",          &TrackInfo::copyright,      true},
+        {"URL",               &TrackInfo::url,            true},
+        {"Codificador",       &TrackInfo::encodedBy,      true},
+    };
+    return fields;
+}
+
+namespace {
+
+QLabel* formLabel(const QString& text, QWidget* parent)
+{
+    auto* label = new QLabel(text, parent);
+    label->setObjectName(QStringLiteral("detailKey"));
+    label->setFont(Theme::uiFont(9));
+    return label;
+}
+
+QLabel* sectionLabel(const QString& text, QWidget* parent)
+{
+    auto* label = new QLabel(text, parent);
+    QFont font = Theme::uiFont(8, QFont::DemiBold);
+    font.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
+    label->setFont(font);
+    label->setObjectName(QStringLiteral("sectionTitle"));
+    return label;
+}
+
+} // namespace
 
 MetadataEditor::MetadataEditor(QWidget* parent)
     : QWidget(parent)
@@ -24,11 +78,143 @@ MetadataEditor::MetadataEditor(QWidget* parent)
     setTrack(TrackInfo());
 }
 
+// --------------------------------------------------------------- construccion
+
+QWidget* MetadataEditor::buildMainSection()
+{
+    auto* section = new QWidget(m_formArea);
+    auto* column = new QVBoxLayout(section);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(6);
+
+    column->addWidget(sectionLabel(Lang::tr("PRINCIPAL"), section));
+
+    auto* form = new QFormLayout;
+    form->setContentsMargins(0, 0, 0, 0);
+    form->setHorizontalSpacing(12);
+    form->setVerticalSpacing(6);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    const auto makeSpin = [&](int maximum, int width) {
+        auto* spin = new QSpinBox(section);
+        spin->setObjectName(QStringLiteral("metaFormField"));
+        spin->setFont(Theme::uiFont(9));
+        spin->setRange(0, maximum);
+        spin->setSpecialValueText(QStringLiteral("--"));
+        spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        spin->setMinimumHeight(24);
+        spin->setFixedWidth(width);
+        connect(spin, &QSpinBox::valueChanged, this, &MetadataEditor::refreshDirtyState);
+        return spin;
+    };
+
+    // --- pista y disco, cada uno con su total -----------------------------
+    m_trackNumber = makeSpin(999, 70);
+    m_trackTotal  = makeSpin(999, 70);
+    m_discNumber  = makeSpin(99, 70);
+    m_discTotal   = makeSpin(99, 70);
+
+    auto* numbers = new QHBoxLayout;
+    numbers->setSpacing(6);
+    numbers->addWidget(m_trackNumber);
+    numbers->addWidget(new QLabel(QStringLiteral("/"), section));
+    numbers->addWidget(m_trackTotal);
+    numbers->addSpacing(14);
+    numbers->addWidget(formLabel(Lang::tr("Disco"), section));
+    numbers->addWidget(m_discNumber);
+    numbers->addWidget(new QLabel(QStringLiteral("/"), section));
+    numbers->addWidget(m_discTotal);
+    numbers->addStretch(1);
+    form->addRow(formLabel(Lang::tr("Pista"), section), numbers);
+
+    // --- campos de texto principales --------------------------------------
+    const QVector<TextField>& fields = textFields();
+    int bpmIndex = -1, keyIndex = -1;
+
+    for (int i = 0; i < fields.size(); ++i) {
+        if (fields.at(i).extended)
+            continue;
+
+        // BPM y clave comparten fila: sueltos ocupaban todo el ancho para dos
+        // valores de cuatro caracteres.
+        if (fields.at(i).member == &TrackInfo::bpm) {
+            bpmIndex = i;
+            continue;
+        }
+        if (fields.at(i).member == &TrackInfo::key) {
+            keyIndex = i;
+            continue;
+        }
+
+        form->addRow(formLabel(Lang::tr(fields.at(i).label), section), m_textEdits.at(i));
+    }
+
+    // --- ano y compilacion -------------------------------------------------
+    m_year = makeSpin(2200, 90);
+
+    m_compilation = new QCheckBox(Lang::tr("Parte de una compilacion"), section);
+    m_compilation->setFont(Theme::uiFont(9));
+    connect(m_compilation, &QCheckBox::toggled, this, &MetadataEditor::refreshDirtyState);
+
+    auto* yearRow = new QHBoxLayout;
+    yearRow->setSpacing(14);
+    yearRow->addWidget(m_year);
+    yearRow->addWidget(m_compilation);
+    yearRow->addStretch(1);
+    form->addRow(formLabel(Lang::tr("Ano"), section), yearRow);
+
+    // --- BPM y clave -------------------------------------------------------
+    if (bpmIndex >= 0 && keyIndex >= 0) {
+        m_textEdits.at(bpmIndex)->setFixedWidth(90);
+        m_textEdits.at(keyIndex)->setFixedWidth(90);
+
+        auto* tempoRow = new QHBoxLayout;
+        tempoRow->setSpacing(14);
+        tempoRow->addWidget(m_textEdits.at(bpmIndex));
+        tempoRow->addWidget(formLabel(Lang::tr("Clave"), section));
+        tempoRow->addWidget(m_textEdits.at(keyIndex));
+        tempoRow->addStretch(1);
+        form->addRow(formLabel(Lang::tr("BPM"), section), tempoRow);
+    }
+
+    // --- comentario --------------------------------------------------------
+    m_comment = new QPlainTextEdit(section);
+    m_comment->setObjectName(QStringLiteral("metaFormField"));
+    m_comment->setFont(Theme::uiFont(9));
+    m_comment->setFixedHeight(56);
+    connect(m_comment, &QPlainTextEdit::textChanged, this, &MetadataEditor::refreshDirtyState);
+    form->addRow(formLabel(Lang::tr("Comentario"), section), m_comment);
+
+    column->addLayout(form);
+    return section;
+}
+
+QWidget* MetadataEditor::buildExtendedSection()
+{
+    auto* section = new QWidget(m_formArea);
+    auto* form = new QFormLayout(section);
+    form->setContentsMargins(0, 2, 0, 0);
+    form->setHorizontalSpacing(12);
+    form->setVerticalSpacing(6);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    const QVector<TextField>& fields = textFields();
+    for (int i = 0; i < fields.size(); ++i) {
+        if (!fields.at(i).extended)
+            continue;
+        form->addRow(formLabel(Lang::tr(fields.at(i).label), section), m_textEdits.at(i));
+    }
+
+    return section;
+}
+
 void MetadataEditor::buildUi()
 {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(20, 16, 20, 14);
-    root->setSpacing(12);
+    root->setSpacing(10);
 
     // --- titulo de la seccion ---------------------------------------------
     auto* headerRow = new QHBoxLayout;
@@ -98,83 +284,57 @@ void MetadataEditor::buildUi()
         emit ratingChanged(value);
     });
 
-    // Columna del formulario.
-    auto* form = new QFormLayout;
-    form->setContentsMargins(0, 0, 0, 0);
-    form->setHorizontalSpacing(12);
-    form->setVerticalSpacing(7);
-    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-
-    const auto makeLabel = [this](const QString& text) {
-        auto* label = new QLabel(text, m_formArea);
-        label->setObjectName(QStringLiteral("detailKey"));
-        label->setFont(Theme::uiFont(9));
-        return label;
-    };
-
-    const auto makeEdit = [this]() {
+    // Los campos de texto se crean antes que las secciones: cada seccion solo
+    // reparte los que le tocan.
+    const QVector<TextField>& fields = textFields();
+    m_textEdits.reserve(fields.size());
+    for (int i = 0; i < fields.size(); ++i) {
         auto* edit = new QLineEdit(m_formArea);
         edit->setObjectName(QStringLiteral("metaFormField"));
         edit->setFont(Theme::uiFont(9));
         edit->setMinimumHeight(24);
         connect(edit, &QLineEdit::textEdited, this, &MetadataEditor::refreshDirtyState);
-        return edit;
-    };
+        m_textEdits.append(edit);
+    }
 
-    const auto makeSpin = [this](int maximum) {
-        auto* spin = new QSpinBox(m_formArea);
-        spin->setObjectName(QStringLiteral("metaFormField"));
-        spin->setFont(Theme::uiFont(9));
-        spin->setRange(0, maximum);
-        spin->setSpecialValueText(QStringLiteral("--"));
-        spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-        spin->setMinimumHeight(24);
-        spin->setFixedWidth(90);
-        connect(spin, &QSpinBox::valueChanged, this, &MetadataEditor::refreshDirtyState);
-        return spin;
-    };
+    // Columna del formulario, desplazable: con la seccion extendida abierta no
+    // caben todos los campos de una vez.
+    auto* scroll = new QScrollArea(m_formArea);
+    scroll->setObjectName(QStringLiteral("metaScroll"));
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    m_title       = makeEdit();
-    m_artist      = makeEdit();
-    m_albumArtist = makeEdit();
-    m_album       = makeEdit();
-    m_genre       = makeEdit();
-    m_composer    = makeEdit();
-    m_year        = makeSpin(2200);
-    m_trackNumber = makeSpin(999);
-    m_discNumber  = makeSpin(99);
+    auto* formHost = new QWidget(scroll);
+    auto* formColumn = new QVBoxLayout(formHost);
+    formColumn->setContentsMargins(0, 0, 10, 0);
+    formColumn->setSpacing(8);
 
-    m_comment = new QPlainTextEdit(m_formArea);
-    m_comment->setObjectName(QStringLiteral("metaFormField"));
-    m_comment->setFont(Theme::uiFont(9));
-    m_comment->setFixedHeight(64);
-    connect(m_comment, &QPlainTextEdit::textChanged, this, &MetadataEditor::refreshDirtyState);
+    formColumn->addWidget(buildMainSection());
 
-    form->addRow(makeLabel(Lang::tr("Titulo")),            m_title);
-    form->addRow(makeLabel(Lang::tr("Artista")),           m_artist);
-    form->addRow(makeLabel(Lang::tr("Artista del album")), m_albumArtist);
-    form->addRow(makeLabel(Lang::tr("Album")),             m_album);
-    form->addRow(makeLabel(Lang::tr("Genero")),            m_genre);
-    form->addRow(makeLabel(Lang::tr("Compositor")),        m_composer);
+    // --- interruptor de la seccion extendida ------------------------------
+    auto* extendedRow = new QHBoxLayout;
+    extendedRow->setSpacing(8);
 
-    // Ano, pista y disco caben en una sola fila.
-    auto* numbersRow = new QHBoxLayout;
-    numbersRow->setSpacing(10);
-    numbersRow->addWidget(m_year);
-    numbersRow->addWidget(makeLabel(Lang::tr("N.o pista")));
-    numbersRow->addWidget(m_trackNumber);
-    numbersRow->addWidget(makeLabel(Lang::tr("Disco")));
-    numbersRow->addWidget(m_discNumber);
-    numbersRow->addStretch(1);
-    form->addRow(makeLabel(Lang::tr("Ano")), numbersRow);
+    m_extendedButton = new FlatButton(Lang::tr("Extendida"), formHost);
+    m_extendedButton->setIconId(Icons::ChevronRight);
+    m_extendedButton->setGlyphSize(14);
+    m_extendedButton->setFixedHeight(24);
+    m_extendedButton->setCheckable(true);
+    m_extendedButton->setToolTip(
+        Lang::tr("Mostrar el resto de etiquetas que admite el archivo"));
+    extendedRow->addWidget(m_extendedButton);
+    extendedRow->addStretch(1);
+    formColumn->addLayout(extendedRow);
+    connect(m_extendedButton, &FlatButton::toggled, this, &MetadataEditor::setExtendedVisible);
 
-    form->addRow(makeLabel(Lang::tr("Comentario")), m_comment);
+    m_extended = buildExtendedSection();
+    m_extended->hide();
+    formColumn->addWidget(m_extended);
 
-    auto* formColumn = new QVBoxLayout;
-    formColumn->addLayout(form);
     formColumn->addStretch(1);
-    body->addLayout(formColumn, 1);
+    scroll->setWidget(formHost);
+    body->addWidget(scroll, 1);
 
     root->addWidget(m_formArea, 1);
 
@@ -223,6 +383,14 @@ void MetadataEditor::buildUi()
     root->addLayout(footer);
 }
 
+void MetadataEditor::setExtendedVisible(bool visible)
+{
+    m_extended->setVisible(visible);
+    m_extendedButton->setIconId(visible ? Icons::ChevronDown : Icons::ChevronRight);
+}
+
+// -------------------------------------------------------------------- estado
+
 void MetadataEditor::setTrack(const TrackInfo& info)
 {
     m_loading = true;
@@ -233,15 +401,16 @@ void MetadataEditor::setTrack(const TrackInfo& info)
     m_emptyHint->setVisible(!valid);
     m_revealButton->setEnabled(valid);
 
-    m_title->setText(info.title);
-    m_artist->setText(info.artist);
-    m_albumArtist->setText(info.albumArtist);
-    m_album->setText(info.album);
-    m_genre->setText(info.genre);
-    m_composer->setText(info.composer);
+    const QVector<TextField>& fields = textFields();
+    for (int i = 0; i < fields.size(); ++i)
+        m_textEdits.at(i)->setText(info.*(fields.at(i).member));
+
     m_year->setValue(info.year);
     m_trackNumber->setValue(info.trackNumber);
+    m_trackTotal->setValue(info.trackTotal);
     m_discNumber->setValue(info.discNumber);
+    m_discTotal->setValue(info.discTotal);
+    m_compilation->setChecked(info.compilation);
     m_comment->setPlainText(info.comment);
     m_rating->setRating(info.rating);
     m_cover->setCover(info.cover);
@@ -257,11 +426,13 @@ void MetadataEditor::setTrack(const TrackInfo& info)
     m_warning->setVisible(valid && !writable);
     m_rating->setReadOnly(!writable);
 
-    const QList<QWidget*> fields = {
-        m_title, m_artist, m_albumArtist, m_album, m_genre, m_composer,
-        m_year, m_trackNumber, m_discNumber, m_comment
+    for (QLineEdit* edit : std::as_const(m_textEdits))
+        edit->setEnabled(writable);
+    const QList<QWidget*> others = {
+        m_year, m_trackNumber, m_trackTotal, m_discNumber, m_discTotal,
+        m_compilation, m_comment
     };
-    for (QWidget* field : fields)
+    for (QWidget* field : others)
         field->setEnabled(writable);
 
     m_loading = false;
@@ -274,15 +445,17 @@ void MetadataEditor::setTrack(const TrackInfo& info)
 TrackInfo MetadataEditor::editedTrack() const
 {
     TrackInfo edited = m_original;
-    edited.title       = m_title->text().trimmed();
-    edited.artist      = m_artist->text().trimmed();
-    edited.albumArtist = m_albumArtist->text().trimmed();
-    edited.album       = m_album->text().trimmed();
-    edited.genre       = m_genre->text().trimmed();
-    edited.composer    = m_composer->text().trimmed();
+
+    const QVector<TextField>& fields = textFields();
+    for (int i = 0; i < fields.size(); ++i)
+        edited.*(fields.at(i).member) = m_textEdits.at(i)->text().trimmed();
+
     edited.year        = m_year->value();
     edited.trackNumber = m_trackNumber->value();
+    edited.trackTotal  = m_trackTotal->value();
     edited.discNumber  = m_discNumber->value();
+    edited.discTotal   = m_discTotal->value();
+    edited.compilation = m_compilation->isChecked();
     edited.comment     = m_comment->toPlainText().trimmed();
     edited.rating      = m_rating->rating();
     return edited;
@@ -294,17 +467,18 @@ void MetadataEditor::refreshDirtyState()
         return;
 
     const TrackInfo edited = editedTrack();
-    const bool dirty =
-        edited.title       != m_original.title       ||
-        edited.artist      != m_original.artist      ||
-        edited.albumArtist != m_original.albumArtist ||
-        edited.album       != m_original.album       ||
-        edited.genre       != m_original.genre       ||
-        edited.composer    != m_original.composer    ||
-        edited.comment     != m_original.comment     ||
-        edited.year        != m_original.year        ||
-        edited.trackNumber != m_original.trackNumber ||
-        edited.discNumber  != m_original.discNumber;
+
+    bool dirty = edited.comment     != m_original.comment
+              || edited.year        != m_original.year
+              || edited.trackNumber != m_original.trackNumber
+              || edited.trackTotal  != m_original.trackTotal
+              || edited.discNumber  != m_original.discNumber
+              || edited.discTotal   != m_original.discTotal
+              || edited.compilation != m_original.compilation;
+
+    const QVector<TextField>& fields = textFields();
+    for (int i = 0; i < fields.size() && !dirty; ++i)
+        dirty = edited.*(fields.at(i).member) != m_original.*(fields.at(i).member);
 
     if (dirty == m_dirty)
         return;

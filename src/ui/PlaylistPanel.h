@@ -65,6 +65,7 @@ private:
     QLineEdit*             m_search = nullptr;
     QLabel*                m_totals = nullptr;
 
+    FlatButton* m_clearButton  = nullptr;
     FlatButton* m_addButton    = nullptr;
     FlatButton* m_removeButton = nullptr;
     FlatButton* m_moreButton   = nullptr;

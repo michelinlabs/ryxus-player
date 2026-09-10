@@ -119,5 +119,5 @@ void TitleBar::paintEvent(QPaintEvent*)
     p.setFont(logoFont);
     p.setPen(Theme::Text);
     p.drawText(QRect(30, 0, 200, height()), Qt::AlignVCenter | Qt::AlignLeft,
-               QStringLiteral("ROXAS PLAYER"));
+               QStringLiteral("RYXUS PLAYER"));
 }
