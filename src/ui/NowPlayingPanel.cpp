@@ -19,7 +19,12 @@ NowPlayingPanel::NowPlayingPanel(AudioEngine* engine, QWidget* parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("nowPlayingPanel"));
-    setFixedWidth(Theme::Metrics::LeftPanelWidth);
+    // Ancho orientativo, no fijo: la columna vive dentro de un divisor y el
+    // usuario la estira. Se conserva un minimo para que la caratula y la ficha
+    // de detalles sigan siendo legibles.
+    setMinimumWidth(232);
+    setMaximumWidth(560);
+    resize(Theme::Metrics::LeftPanelWidth, height());
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -83,6 +88,15 @@ NowPlayingPanel::NowPlayingPanel(AudioEngine* engine, QWidget* parent)
     root->addWidget(m_footer);
 }
 
+void NowPlayingPanel::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (!m_footerPath.isEmpty()) {
+        m_footer->setText(m_footer->fontMetrics().elidedText(
+            m_footerPath, Qt::ElideMiddle, qMax(80, m_footer->width())));
+    }
+}
+
 void NowPlayingPanel::setPlayingTrack(const TrackInfo& info)
 {
     m_header->setTrack(info);
@@ -91,8 +105,11 @@ void NowPlayingPanel::setPlayingTrack(const TrackInfo& info)
 
     if (info.isValid()) {
         const QString folder = QFileInfo(info.path).absolutePath();
+        m_footerPath = folder;
+        // Se recorta contra el ancho real de la columna, no contra el de
+        // referencia: ahora el usuario la estira con el divisor.
         m_footer->setText(m_footer->fontMetrics().elidedText(
-            folder, Qt::ElideMiddle, Theme::Metrics::LeftPanelWidth - 28));
+            folder, Qt::ElideMiddle, qMax(80, m_footer->width())));
         m_footer->setToolTip(info.path);
     } else {
         m_footer->clear();

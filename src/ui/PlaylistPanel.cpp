@@ -96,8 +96,12 @@ void PlaylistPanel::buildUi()
     m_view->setMouseTracking(true);
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
     m_view->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    m_view->setDragDropMode(QAbstractItemView::InternalMove);
+    // DragDrop, no InternalMove: ademas de reordenar, la lista acepta pistas
+    // arrastradas desde la lista de archivos o desde el Explorador.
+    m_view->setDragDropMode(QAbstractItemView::DragDrop);
     m_view->setDefaultDropAction(Qt::MoveAction);
+    m_view->setAcceptDrops(true);
+    m_view->setDropIndicatorShown(true);
     root->addWidget(m_view, 1);
 
     connect(m_view, &QListView::doubleClicked, this, &PlaylistPanel::onItemActivated);

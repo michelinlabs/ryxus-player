@@ -18,6 +18,7 @@ class PlayerBar;
 class PlaylistPanel;
 class RibbonTabBar;
 class SettingsDialog;
+class SystemAudioTap;
 class TitleBar;
 class WaveformWorker;
 
@@ -41,12 +42,17 @@ protected:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+    // Arrastrar pistas o carpetas desde el Explorador a la ventana.
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+
 private slots:
     // --- reproduccion ------------------------------------------------------
     void playPlaylistRow(int row);
     void playNext();
     void playPrevious();
     void togglePlayPause();
+    void onPlayClicked();
     void stopPlayback();
     void onEngineStateChanged(AudioEngine::State state);
     void onTick();
@@ -77,6 +83,7 @@ private slots:
     void openSettings();
     void applyTheme(const QString& paletteId);
     void restartForLanguage();
+    void applySystemAudio(bool enabled, const QByteArray& source, const QByteArray& output);
 
     // --- fondo -------------------------------------------------------------
     void showAppMenu(const QPoint& globalPos);
@@ -85,11 +92,20 @@ private slots:
     void setBackgroundTransparency(int percent);
     void setBackgroundDarkening(int percent);
     void setBackgroundMode(int mode);
+    void setBackgroundVisualization(int index);
+    void setBackgroundImageOpacity(int percent);
+    void setBackgroundVisualOpacity(int percent);
 
     // --- interfaz ----------------------------------------------------------
     void toggleMaximized();
     void runUninstaller();
     void toggleEqualizerPanel(bool visible);
+
+    // --- disposicion de las columnas ---------------------------------------
+    void setPanelVisible(int panel, bool visible);
+    void swapBodyColumns();
+    void swapPanelColumns();
+    void resetPanelLayout();
     void cycleRepeatMode();
     void openFilesDialog();
 
@@ -106,6 +122,11 @@ private:
     // Maximizado propio contra el area de trabajo, y rescate de la ventana
     // cuando la sesion anterior la dejo fuera de ella. Ver toggleMaximized().
     bool isWindowMaximized() const { return m_manualMaximized || isMaximized(); }
+
+    // Hay audio circulando por la cadena: o suena el reproductor, o esta
+    // entrando por la captura del sistema. El espectro del ecualizador y la
+    // onda del panel izquierdo se mueven en los dos casos.
+    bool audioIsFlowing() const;
     void clampIntoWorkArea();
     void repaintForTransparency();
     void loadTrackIntoUi(const TrackInfo& info);
@@ -139,8 +160,17 @@ private:
     PlaylistPanel*   m_playlists  = nullptr;
     EqualizerPanel*  m_equalizer  = nullptr;
     SettingsDialog*  m_settings   = nullptr;
+    SystemAudioTap*  m_systemAudio = nullptr;
     PlayerBar*       m_playerBar  = nullptr;
     QSplitter*       m_centerSplitter = nullptr;
+    QSplitter*       m_bodySplitter   = nullptr;
+    QSplitter*       m_panelsSplitter = nullptr;
+    QWidget*         m_centerColumn   = nullptr;
+
+    // Columnas que se pueden ocultar una a una para ver el fondo.
+    enum Panel { PanelNowPlaying = 0, PanelFiles, PanelPlaylist, PanelCount };
+    static const char* panelKey(int panel);
+    QWidget* panelWidget(int panel) const;
 
     // --- estado ------------------------------------------------------------
     TrackInfo m_currentTrack;   // la que suena

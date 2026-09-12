@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RyxusPlayer VERSION 1.2.1 LANGUAGES CXX)
+project(RyxusPlayer VERSION 1.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,7 @@ set(RYXUS_SOURCES
     src/core/Effects.h              src/core/Effects.cpp
     src/core/Equalizer.h            src/core/Equalizer.cpp
     src/core/Lang.h                 src/core/Lang.cpp
+    src/core/Limiter.h              src/core/Limiter.cpp
     src/core/AudioEngine.h          src/core/AudioEngine.cpp
     src/core/TrackInfo.h            src/core/TrackInfo.cpp
     src/core/UiScale.h              src/core/UiScale.cpp
@@ -30,6 +31,7 @@ set(RYXUS_SOURCES
     src/core/WaveformWorker.h       src/core/WaveformWorker.cpp
     src/core/LibraryScanner.h       src/core/LibraryScanner.cpp
     src/core/Settings.h             src/core/Settings.cpp
+    src/core/SystemAudioTap.h       src/core/SystemAudioTap.cpp
     src/core/ShellUtils.h           src/core/ShellUtils.cpp
     src/core/SpectrumAnalyzer.h     src/core/SpectrumAnalyzer.cpp
 
@@ -45,6 +47,7 @@ set(RYXUS_SOURCES
     src/ui/NowPlayingHeader.h       src/ui/NowPlayingHeader.cpp
     src/ui/RatingBar.h              src/ui/RatingBar.cpp
     src/ui/TrackDetails.h           src/ui/TrackDetails.cpp
+    src/ui/Visualizations.h         src/ui/Visualizations.cpp
     src/ui/Visualizer.h             src/ui/Visualizer.cpp
     src/ui/LibraryPanel.h           src/ui/LibraryPanel.cpp
     src/ui/FileListPanel.h          src/ui/FileListPanel.cpp

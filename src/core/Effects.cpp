@@ -333,11 +333,26 @@ void Effects::process(float* interleaved, unsigned frameCount, int channels)
 
             const float levelDb = 20.0f * std::log10(std::max(m_envelope, 1e-6f));
             const float overDb  = levelDb - m_cache.threshDb;
-            const float cutDb   = (overDb > 0.0f)
-                                ? overDb * (1.0f - 1.0f / m_cache.ratio)
-                                : 0.0f;
+            const float slope   = 1.0f - 1.0f / m_cache.ratio;
 
-            m_compGain = dbToLinear(-cutDb) * m_cache.makeup;
+            // Rodilla suave de 6 dB: sin ella la compresion entra de golpe al
+            // cruzar el umbral y se oye el salto en cada transitorio.
+            constexpr float kKnee = 6.0f;
+            float cutDb;
+            if (overDb <= -kKnee * 0.5f) {
+                cutDb = 0.0f;
+            } else if (overDb >= kKnee * 0.5f) {
+                cutDb = overDb * slope;
+            } else {
+                const float t = overDb + kKnee * 0.5f;
+                cutDb = slope * t * t / (2.0f * kKnee);
+            }
+
+            // La ganancia tambien se persigue, no se salta: el detector ya va
+            // suavizado, pero la curva de la rodilla puede moverse rapido.
+            const float targetGain = dbToLinear(-cutDb) * m_cache.makeup;
+            m_compGain += (targetGain - m_compGain) * 0.25f;
+
             for (int c = 0; c < ch; ++c)
                 frame[c] *= m_compGain;
         }
@@ -398,15 +413,8 @@ void Effects::process(float* interleaved, unsigned frameCount, int channels)
             frame[1] = mid - side;
         }
 
-        // Red de seguridad: encadenar realce, eco y reverberacion puede pasarse
-        // de 0 dBFS. Se limita con la misma curva suave del ecualizador.
-        for (int c = 0; c < ch; ++c) {
-            float x = frame[c];
-            if (x > 0.95f)
-                x = 0.95f + 0.05f * std::tanh((x - 0.95f) * 20.0f);
-            else if (x < -0.95f)
-                x = -0.95f + 0.05f * std::tanh((x + 0.95f) * 20.0f);
-            frame[c] = x;
-        }
+        // Sin recortador propio: encadenar realce, eco y reverberacion puede
+        // pasarse de 0 dBFS, pero de eso se ocupa el limitador del final de la
+        // cadena, que solo actua cuando de verdad hace falta.
     }
 }

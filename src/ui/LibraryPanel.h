@@ -36,6 +36,7 @@ signals:
 private slots:
     void onSelectionChanged();
     void onItemExpanded(QTreeWidgetItem* item);
+    void onItemCollapsed(QTreeWidgetItem* item);
     void onItemDoubleClicked(QTreeWidgetItem* item, int column);
     void onQuickSearch(const QString& text);
     void showTreeContextMenu(const QPoint& pos);
@@ -50,6 +51,7 @@ private:
     QTreeWidgetItem* addRoot(const QString& path);
     void populate(QTreeWidgetItem* item);
     void expandBranch(QTreeWidgetItem* item, int& budget);
+    void collapseBranch(QTreeWidgetItem* item);
     static QString pathOf(QTreeWidgetItem* item);
     void filterItem(QTreeWidgetItem* item, const QString& needle);
 

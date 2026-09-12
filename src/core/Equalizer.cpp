@@ -34,7 +34,7 @@ Equalizer::Equalizer()
         m_freqs[b].store(kDefaultFreqs[b], std::memory_order_relaxed);
         m_qs[b].store(kDefaultQ, std::memory_order_relaxed);
     }
-    recompute();
+    prepare(m_sampleRate);
 }
 
 void Equalizer::prepare(double sampleRate)
@@ -43,6 +43,14 @@ void Equalizer::prepare(double sampleRate)
         m_sampleRate = sampleRate;
     for (auto& chan : m_state)
         chan.fill(State{});
+
+    // Constante de tiempo de unos 8 ms para perseguir los mandos: lo bastante
+    // rapido para que el arrastre se sienta inmediato y lo bastante lento para
+    // que no se oiga el salto.
+    const double blocksPerSecond = m_sampleRate / double(kControlBlock);
+    m_chase = 1.0 - std::exp(-1.0 / (0.008 * blocksPerSecond));
+
+    m_coeffsValid = false;
     m_dirty.store(true, std::memory_order_release);
 }
 
@@ -149,59 +157,101 @@ Equalizer::Coeffs Equalizer::peaking(double freq, double sampleRate, double q, d
     return c;
 }
 
-void Equalizer::recompute()
+void Equalizer::recomputeFromSmoothed()
 {
-    for (int b = 0; b < kBands; ++b) {
-        m_coeffs[b] = peaking(m_freqs[b].load(std::memory_order_relaxed),
-                              m_sampleRate,
-                              m_qs[b].load(std::memory_order_relaxed),
-                              m_gains[b].load(std::memory_order_relaxed));
+    for (int b = 0; b < kBands; ++b)
+        m_coeffs[b] = peaking(m_smoothFreq[b], m_sampleRate, m_smoothQ[b], m_smoothGain[b]);
+    m_coeffsValid = true;
+}
+
+void Equalizer::updateSmoothed()
+{
+    // Primera pasada: se colocan los valores donde estan, sin perseguir nada.
+    if (!m_coeffsValid) {
+        for (int b = 0; b < kBands; ++b) {
+            m_smoothGain[b] = m_gains[b].load(std::memory_order_relaxed);
+            m_smoothFreq[b] = m_freqs[b].load(std::memory_order_relaxed);
+            m_smoothQ[b]    = m_qs[b].load(std::memory_order_relaxed);
+        }
+        m_smoothPreamp = dbToLinear(m_preamp.load(std::memory_order_relaxed));
+        recomputeFromSmoothed();
+        return;
     }
-    m_preampLinear = dbToLinear(m_preamp.load(std::memory_order_relaxed));
+
+    bool moved = false;
+    const double chase = m_chase;
+
+    const auto follow = [&](double& current, double target) {
+        const double next = current + (target - current) * chase;
+        if (std::abs(next - current) > 1e-9) {
+            current = next;
+            moved = true;
+        } else if (current != target) {
+            current = target;      // remate: evita perseguir eternamente
+            moved = true;
+        }
+    };
+
+    for (int b = 0; b < kBands; ++b) {
+        follow(m_smoothGain[b], m_gains[b].load(std::memory_order_relaxed));
+        follow(m_smoothFreq[b], m_freqs[b].load(std::memory_order_relaxed));
+        follow(m_smoothQ[b],    m_qs[b].load(std::memory_order_relaxed));
+    }
+    follow(m_smoothPreamp, dbToLinear(m_preamp.load(std::memory_order_relaxed)));
+
+    if (moved)
+        recomputeFromSmoothed();
 }
 
 void Equalizer::process(float* interleaved, unsigned frameCount, int channels)
 {
-    if (!interleaved || channels <= 0)
+    if (!interleaved || channels <= 0 || frameCount == 0)
         return;
 
-    if (m_dirty.exchange(false, std::memory_order_acquire))
-        recompute();
+    m_dirty.store(false, std::memory_order_relaxed);
 
-    if (!m_enabled.load(std::memory_order_relaxed))
+    if (!m_enabled.load(std::memory_order_relaxed)) {
+        // Apagado no se toca una sola muestra, pero el estado se deja limpio
+        // para que al volver a encenderlo no salte la cola del filtro.
+        for (auto& chan : m_state)
+            chan.fill(State{});
+        m_coeffsValid = false;
         return;
+    }
 
-    const int   ch  = std::min(channels, kMaxChans);
-    const float pre = m_preampLinear;
+    const int ch = std::min(channels, kMaxChans);
 
-    for (unsigned f = 0; f < frameCount; ++f) {
-        float* frame = interleaved + static_cast<size_t>(f) * channels;
-        for (int c = 0; c < ch; ++c) {
-            float x = frame[c] * pre;
+    for (unsigned done = 0; done < frameCount; ) {
+        const unsigned block = std::min<unsigned>(kControlBlock, frameCount - done);
+        updateSmoothed();
 
-            for (int b = 0; b < kBands; ++b) {
-                const Coeffs& k = m_coeffs[b];
-                State& s = m_state[c][b];
+        const double pre = m_smoothPreamp;
 
-                const float y = k.b0 * x + k.b1 * s.x1 + k.b2 * s.x2
-                                         - k.a1 * s.y1 - k.a2 * s.y2;
-                s.x2 = s.x1;
-                s.x1 = x;
-                s.y2 = s.y1;
-                s.y1 = y;
-                x = y;
+        for (unsigned f = 0; f < block; ++f) {
+            float* frame = interleaved + size_t(done + f) * size_t(channels);
+
+            for (int c = 0; c < ch; ++c) {
+                double x = double(frame[c]) * pre;
+
+                for (int b = 0; b < kBands; ++b) {
+                    const Coeffs& k = m_coeffs[b];
+                    State& s = m_state[c][b];
+
+                    const double y = k.b0 * x + s.z1;
+                    s.z1 = k.b1 * x - k.a1 * y + s.z2;
+                    s.z2 = k.b2 * x - k.a2 * y;
+                    x = y;
+                }
+
+                // Sin recortador: el que habia actuaba en cada pico por encima
+                // de 0,9 aunque la curva estuviera plana, asi que ensuciaba
+                // cualquier tema bien masterizado. De que no se pase de 0 dBFS
+                // se encarga el limitador del final de la cadena.
+                frame[c] = float(x);
             }
-
-            // Saturacion suave por encima de 0.9: evita el recorte duro al
-            // sumar realces de varias bandas. El tanh solo se evalua en los
-            // picos, asi que no pesa en el caso normal.
-            if (x > 0.9f)
-                x = 0.9f + 0.1f * std::tanh((x - 0.9f) * 10.0f);
-            else if (x < -0.9f)
-                x = -0.9f + 0.1f * std::tanh((x + 0.9f) * 10.0f);
-
-            frame[c] = x;
         }
+
+        done += block;
     }
 }
 
@@ -215,6 +265,9 @@ void Equalizer::responseDb(const float* freqHz, float* outDb, int count) const
         return;
     }
 
+    // La curva se dibuja con los valores que el usuario ha puesto, no con los
+    // perseguidos: si no, al arrastrar un nodo la linea iria por detras del
+    // raton.
     std::array<Coeffs, kBands> coeffs;
     for (int b = 0; b < kBands; ++b) {
         coeffs[b] = peaking(m_freqs[b].load(std::memory_order_relaxed),
@@ -231,8 +284,8 @@ void Equalizer::responseDb(const float* freqHz, float* outDb, int count) const
 
         double magnitude = 1.0;
         for (const Coeffs& k : coeffs) {
-            const std::complex<double> num = double(k.b0) + double(k.b1) * z1 + double(k.b2) * z2;
-            const std::complex<double> den = 1.0          + double(k.a1) * z1 + double(k.a2) * z2;
+            const std::complex<double> num = k.b0 + k.b1 * z1 + k.b2 * z2;
+            const std::complex<double> den = 1.0  + k.a1 * z1 + k.a2 * z2;
             if (std::abs(den) > 1e-12)
                 magnitude *= std::abs(num / den);
         }

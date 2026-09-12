@@ -40,11 +40,15 @@ signals:
 protected:
     void paintEvent(QPaintEvent* event) override;
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
     CoverArtView*     m_cover      = nullptr;
     NowPlayingHeader* m_header     = nullptr;
     Visualizer*       m_visualizer = nullptr;
     TrackDetails*     m_details    = nullptr;
     FlatButton*       m_editButton = nullptr;
+    QString m_footerPath;   // sin recortar, para re-elidir al cambiar de ancho
     QLabel*           m_footer     = nullptr;
 };

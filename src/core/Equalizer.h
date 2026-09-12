@@ -66,10 +66,22 @@ public:
     void responseDb(const float* freqHz, float* outDb, int count) const;
 
 private:
-    struct Coeffs { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0; };
-    struct State  { float x1 = 0, x2 = 0, y1 = 0, y2 = 0; };
+    // Coeficientes y estado en doble precision. En float, una banda grave con
+    // Q alto -- 32 Hz a 48 kHz son coeficientes muy proximos a 1 -- acumula
+    // error suficiente para que se oiga como ruido de fondo.
+    struct Coeffs { double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0; };
 
-    void recompute();
+    // Forma directa transpuesta II: dos estados en vez de cuatro y mucho mejor
+    // comportamiento numerico cuando los coeficientes cambian sobre la marcha.
+    struct State  { double z1 = 0, z2 = 0; };
+
+    // Cada cuantas muestras se refrescan los coeficientes. Recalcularlos por
+    // muestra seria un derroche, y hacerlo por bloque entero se oye como un
+    // clic al arrastrar un nodo.
+    static constexpr unsigned kControlBlock = 32;
+
+    void updateSmoothed();
+    void recomputeFromSmoothed();
     static Coeffs peaking(double freq, double sampleRate, double q, double gainDb);
 
     double m_sampleRate = 48000.0;
@@ -84,5 +96,13 @@ private:
     // Solo los toca el hilo de audio.
     std::array<Coeffs, kBands> m_coeffs;
     std::array<std::array<State, kBands>, kMaxChans> m_state{};
-    float m_preampLinear = 1.0f;
+
+    // Valores perseguidos: los mandos saltan, estos los siguen con una
+    // constante de tiempo corta para que no haya clics ni escalones.
+    std::array<double, kBands> m_smoothGain{};
+    std::array<double, kBands> m_smoothFreq{};
+    std::array<double, kBands> m_smoothQ{};
+    double m_smoothPreamp = 1.0;
+    double m_chase        = 0.0;   // coeficiente de la persecucion
+    bool   m_coeffsValid  = false;
 };

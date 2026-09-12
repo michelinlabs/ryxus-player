@@ -9,8 +9,8 @@ IDI_RYXUS_ICON ICON "ryxus.ico"
 #include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
-    FILEVERSION     1,2,1,0
-    PRODUCTVERSION  1,2,1,0
+    FILEVERSION     1,3,0,0
+    PRODUCTVERSION  1,3,0,0
     FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
     FILEFLAGS       0
     FILEOS          VOS_NT_WINDOWS32
@@ -23,12 +23,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "michelinlabs"
             VALUE "FileDescription",  "Ryxus Player"
-            VALUE "FileVersion",      "1.2.1"
+            VALUE "FileVersion",      "1.3.0"
             VALUE "InternalName",     "RyxusPlayer"
             VALUE "LegalCopyright",   "Copyright (c) 2026 michelinlabs. Licencia MIT."
             VALUE "OriginalFilename", "RyxusPlayer.exe"
             VALUE "ProductName",      "Ryxus Player"
-            VALUE "ProductVersion",   "1.2.1"
+            VALUE "ProductVersion",   "1.3.0"
         END
     END
     BLOCK "VarFileInfo"

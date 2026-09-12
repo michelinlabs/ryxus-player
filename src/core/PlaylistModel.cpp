@@ -2,7 +2,11 @@
 #include "core/MetadataService.h"
 
 #include <QCollator>
+#include <QDir>
+#include <QFileInfo>
+#include <QMimeData>
 #include <QRandomGenerator>
+#include <QUrl>
 
 #include <algorithm>
 #include <functional>
@@ -87,6 +91,105 @@ Qt::ItemFlags PlaylistModel::flags(const QModelIndex& index) const
 Qt::DropActions PlaylistModel::supportedDropActions() const
 {
     return Qt::MoveAction | Qt::CopyAction;
+}
+
+QStringList PlaylistModel::mimeTypes() const
+{
+    // El primero es el que usa la propia lista para reordenarse; el segundo,
+    // el que traen la lista de archivos y el Explorador.
+    QStringList types = QAbstractListModel::mimeTypes();
+    types << QStringLiteral("text/uri-list");
+    return types;
+}
+
+QMimeData* PlaylistModel::mimeData(const QModelIndexList& indexes) const
+{
+    QMimeData* data = QAbstractListModel::mimeData(indexes);
+    if (!data)
+        return nullptr;
+
+    // Ademas del formato interno se exportan las rutas, para poder arrastrar
+    // fuera del programa.
+    QList<QUrl> urls;
+    for (const QModelIndex& index : indexes) {
+        if (index.isValid() && index.row() < m_tracks.size())
+            urls << QUrl::fromLocalFile(m_tracks.at(index.row()).path);
+    }
+    if (!urls.isEmpty())
+        data->setUrls(urls);
+
+    return data;
+}
+
+bool PlaylistModel::canDropMimeData(const QMimeData* data, Qt::DropAction action,
+                                    int row, int column, const QModelIndex& parent) const
+{
+    if (data && data->hasUrls())
+        return true;
+    return QAbstractListModel::canDropMimeData(data, action, row, column, parent);
+}
+
+bool PlaylistModel::dropMimeData(const QMimeData* data, Qt::DropAction action,
+                                 int row, int column, const QModelIndex& parent)
+{
+    if (action == Qt::IgnoreAction)
+        return true;
+
+    if (data && data->hasUrls()) {
+        // Soltar sobre una fila inserta justo ahi; soltar en el hueco de abajo
+        // llega con row == -1 y va al final.
+        int target = row;
+        if (target < 0)
+            target = parent.isValid() ? parent.row() : int(m_tracks.size());
+
+        QStringList paths;
+        const QList<QUrl> urls = data->urls();
+        paths.reserve(urls.size());
+        for (const QUrl& url : urls) {
+            if (url.isLocalFile())
+                paths << url.toLocalFile();
+        }
+
+        return insertFiles(target, paths) > 0;
+    }
+
+    return QAbstractListModel::dropMimeData(data, action, row, column, parent);
+}
+
+int PlaylistModel::insertFiles(int row, const QStringList& paths)
+{
+    QVector<TrackInfo> tracks;
+    tracks.reserve(paths.size());
+
+    for (const QString& path : paths) {
+        // Soltar una carpeta trae la carpeta entera, que es lo que espera
+        // cualquiera que arrastre un album desde el Explorador.
+        const QFileInfo fi(path);
+        if (fi.isDir()) {
+            const QFileInfoList entries = QDir(path).entryInfoList(
+                QDir::Files | QDir::Readable, QDir::Name | QDir::LocaleAware);
+            for (const QFileInfo& entry : entries) {
+                if (!TrackInfo::isSupported(entry.absoluteFilePath()))
+                    continue;
+                const TrackInfo info = MetadataService::read(entry.absoluteFilePath(), false);
+                if (info.isValid())
+                    tracks << info;
+            }
+            continue;
+        }
+
+        if (!TrackInfo::isSupported(path))
+            continue;
+        const TrackInfo info = MetadataService::read(path, false);
+        if (info.isValid())
+            tracks << info;
+    }
+
+    if (tracks.isEmpty())
+        return 0;
+
+    insertTracks(row, tracks);
+    return int(tracks.size());
 }
 
 bool PlaylistModel::removeRows(int row, int count, const QModelIndex& parent)

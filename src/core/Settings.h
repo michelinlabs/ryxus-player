@@ -65,11 +65,32 @@ void  setEffectParam(const QString& deviceId, const QString& paramId, float valu
 bool  effectsRackOpen();
 void  setEffectsRackOpen(bool value);
 
+// --- audio del sistema -----------------------------------------------------
+bool       systemAudioEnabled();
+void       setSystemAudioEnabled(bool value);
+QByteArray systemAudioSource();          // salida que se captura
+void       setSystemAudioSource(const QByteArray& id);
+QByteArray systemAudioOutput();          // salida por la que sale procesado
+void       setSystemAudioOutput(const QByteArray& id);
+
 // --- interfaz --------------------------------------------------------------
 QByteArray windowGeometry();
 void       setWindowGeometry(const QByteArray& value);
 QByteArray splitterState();
 void       setSplitterState(const QByteArray& value);
+
+// --- disposicion de las columnas -------------------------------------------
+// Tamanos de los dos divisores, si estan intercambiadas y cuales se ven.
+QByteArray bodySplitterState();
+void       setBodySplitterState(const QByteArray& value);
+QByteArray panelsSplitterState();
+void       setPanelsSplitterState(const QByteArray& value);
+bool       bodySwapped();
+void       setBodySwapped(bool value);
+bool       panelsSwapped();
+void       setPanelsSwapped(bool value);
+bool       panelVisible(const QString& id);
+void       setPanelVisible(const QString& id, bool value);
 bool       eqPanelVisible();
 void       setEqPanelVisible(bool value);
 
@@ -86,6 +107,13 @@ int     backgroundTransparency();          // 0..85 (% de transparencia)
 void    setBackgroundTransparency(int percent);
 int     backgroundDarkening();             // 0..90 (% de velo oscuro)
 void    setBackgroundDarkening(int percent);
+// Capa viva: indice de Visualizations, -1 = ninguna.
+int     backgroundVisualization();
+void    setBackgroundVisualization(int index);
+int     backgroundImageOpacity();          // 0..100, capa de imagen
+void    setBackgroundImageOpacity(int percent);
+int     backgroundVisualOpacity();         // 0..100, capa viva
+void    setBackgroundVisualOpacity(int percent);
 int     backgroundMode();                  // BackgroundHost::Mode como entero
 void    setBackgroundMode(int mode);
 

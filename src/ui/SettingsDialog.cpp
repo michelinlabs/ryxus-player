@@ -2,12 +2,17 @@
 
 #include "core/Lang.h"
 #include "core/Settings.h"
+#include "core/SystemAudioTap.h"
+#include "ui/Visualizations.h"
 #include "ui/BackgroundHost.h"
 #include "ui/FlatButton.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
+#include <QProcess>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGridLayout>
@@ -18,6 +23,8 @@
 #include <QScrollArea>
 #include <QSlider>
 #include <QStandardPaths>
+#include <QSignalBlocker>
+#include <QUrl>
 #include <QVBoxLayout>
 
 // --------------------------------------------------------------- ThemeSwatch
@@ -191,7 +198,7 @@ void SettingsDialog::buildUi()
     m_imageLabel->setFont(Theme::uiFont(9));
     imageRow->addWidget(m_imageLabel, 1);
 
-    auto* chooseButton = new FlatButton(Lang::tr("Elegir imagen..."), this);
+    auto* chooseButton = new FlatButton(Lang::tr("Elegir imagen o GIF..."), this);
     chooseButton->setIconId(Icons::Image);
     chooseButton->setGlyphSize(14);
     chooseButton->setFixedHeight(26);
@@ -276,13 +283,177 @@ void SettingsDialog::buildUi()
         emit darkeningChanged(value);
     });
 
+    // --- capa viva ---------------------------------------------------------
+    auto* visualRow = new QHBoxLayout;
+    visualRow->setSpacing(8);
+
+    auto* visualLabel = new QLabel(Lang::tr("Visualizacion"), this);
+    visualLabel->setObjectName(QStringLiteral("detailKey"));
+    visualLabel->setFont(Theme::uiFont(9));
+    visualLabel->setFixedWidth(170);
+    visualRow->addWidget(visualLabel);
+
+    m_visualization = new QComboBox(this);
+    m_visualization->setFont(Theme::uiFont(9));
+    m_visualization->setFixedWidth(160);
+    m_visualization->addItem(Lang::tr("Ninguna"), -1);
+    for (int i = 0; i < Visualizations::count(); ++i)
+        m_visualization->addItem(Lang::tr(Visualizations::info(i).name), i);
+    m_visualization->setCurrentIndex(
+        qMax(0, m_visualization->findData(Settings::backgroundVisualization())));
+    visualRow->addWidget(m_visualization);
+    visualRow->addStretch(1);
+    root->addLayout(visualRow);
+
+    connect(m_visualization, &QComboBox::currentIndexChanged, this, [this](int) {
+        emit visualizationChanged(m_visualization->currentData().toInt());
+    });
+
+    // --- opacidad de cada capa, por separado -------------------------------
+    addSlider(Lang::tr("Opacidad de la imagen"),
+              Settings::backgroundImageOpacity(), 100,
+              m_imageOpacity, m_imageOpacityValue);
+    addSlider(Lang::tr("Opacidad de la visualizacion"),
+              Settings::backgroundVisualOpacity(), 100,
+              m_visualOpacity, m_visualOpacityValue);
+
+    connect(m_imageOpacity, &QSlider::valueChanged, this, [this](int value) {
+        m_imageOpacityValue->setText(QStringLiteral("%1 %").arg(value));
+        emit imageOpacityChanged(value);
+    });
+    connect(m_visualOpacity, &QSlider::valueChanged, this, [this](int value) {
+        m_visualOpacityValue->setText(QStringLiteral("%1 %").arg(value));
+        emit visualOpacityChanged(value);
+    });
+
     auto* bgNote = new QLabel(
-        Lang::tr("La transparencia y el oscurecido solo actuan cuando hay una imagen de fondo."),
+        Lang::tr("El fondo tiene dos capas que conviven: la imagen (JPG, PNG, WEBP o GIF "
+                 "animado) y la visualizacion, que se dibuja con el audio en vivo. Cada "
+                 "una lleva su propia opacidad, y la transparencia de los paneles deja "
+                 "ver las dos a traves de la interfaz."),
         this);
     bgNote->setObjectName(QStringLiteral("statusText"));
     bgNote->setFont(Theme::uiFont(8));
     bgNote->setWordWrap(true);
     root->addWidget(bgNote);
+
+    // ------------------------------------------------- audio del sistema
+    root->addSpacing(6);
+    root->addWidget(sectionTitle(Lang::tr("AUDIO DEL SISTEMA"), this));
+
+    m_systemAudio = new QCheckBox(
+        Lang::tr("Aplicar el ecualizador y los efectos a todo el audio de Windows"), this);
+    m_systemAudio->setFont(Theme::uiFont(9));
+    m_systemAudio->setChecked(Settings::systemAudioEnabled());
+    root->addWidget(m_systemAudio);
+
+    const QList<SystemAudioTap::Device> outputs = SystemAudioTap::outputDevices();
+
+    // El reparto correcto lo decide SystemAudioTap: capturar del cable virtual
+    // y sacar por unos altavoces de verdad. Si no hay cable, devuelve vacio.
+    QByteArray suggestedSource, suggestedOutput;
+    SystemAudioTap::suggestRouting(&suggestedSource, &suggestedOutput);
+    const bool haveCable = !suggestedSource.isEmpty();
+
+    // Lo que ya estaba guardado manda sobre la sugerencia, salvo que no sirva.
+    QByteArray sourceDefault = Settings::systemAudioSource();
+    QByteArray outputDefault = Settings::systemAudioOutput();
+    if (sourceDefault.isEmpty() || sourceDefault == outputDefault) {
+        sourceDefault = suggestedSource;
+        outputDefault = suggestedOutput;
+    }
+
+    const auto addDeviceRow = [&](const QString& label, QComboBox*& combo,
+                                  const QByteArray& current) {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(8);
+
+        auto* text = new QLabel(label, this);
+        text->setObjectName(QStringLiteral("detailKey"));
+        text->setFont(Theme::uiFont(9));
+        text->setFixedWidth(170);
+        row->addWidget(text);
+
+        combo = new QComboBox(this);
+        combo->setFont(Theme::uiFont(9));
+        combo->setMinimumWidth(300);
+        for (const SystemAudioTap::Device& device : outputs) {
+            combo->addItem(device.isDefault
+                               ? Lang::tr("%1  (predeterminada)").arg(device.name)
+                               : device.name,
+                           device.id);
+        }
+        const int index = combo->findData(current);
+        combo->setCurrentIndex(index >= 0 ? index : 0);
+        row->addWidget(combo, 1);
+
+        root->addLayout(row);
+    };
+
+    addDeviceRow(Lang::tr("Capturar de"), m_systemSource, sourceDefault);
+    addDeviceRow(Lang::tr("Sacar procesado por"), m_systemOutput, outputDefault);
+
+    m_systemAudioStatus = new QLabel(this);
+    m_systemAudioStatus->setObjectName(QStringLiteral("statusText"));
+    m_systemAudioStatus->setFont(Theme::uiFont(8));
+    m_systemAudioStatus->setWordWrap(true);
+    m_systemAudioStatus->setText(haveCable
+        ? Lang::tr(
+            "Cable virtual detectado y ya elegido arriba. Falta un solo paso, y ese lo "
+            "tiene que dar Windows: poner el cable como salida predeterminada.\n\n"
+            "1. Pulsa el boton de abajo.\n"
+            "2. En Salida, elige el cable (CABLE Input).\n"
+            "3. Vuelve aqui y marca la casilla de arriba.\n\n"
+            "Desde ese momento todo lo que suene en Windows entra por el cable, pasa "
+            "por el ecualizador y los efectos, y sale por la salida elegida arriba.")
+        : Lang::tr(
+            "Windows no deja a un programa normal filtrar el sonido de los demas antes "
+            "de que salga por el altavoz: eso lo hace Realtek porque instala un "
+            "controlador del sistema. Lo que si se puede es capturar una salida y "
+            "devolverla procesada por otra distinta.\n\n"
+            "Para eso hace falta un cable de audio virtual. Instala VB-Cable (gratis) "
+            "con el boton de abajo y vuelve: el resto se elige solo."));
+
+    // El paso que no se puede dar desde aqui: se lleva al usuario al sitio.
+    auto* actionRow = new QHBoxLayout;
+    actionRow->setSpacing(8);
+    actionRow->addStretch(1);
+
+    auto* actionButton = new FlatButton(
+        haveCable ? Lang::tr("Abrir la configuracion de sonido de Windows")
+                  : Lang::tr("Descargar VB-Cable (gratis)"), this);
+    actionButton->setIconId(haveCable ? Icons::Settings : Icons::ArrowRight);
+    actionButton->setGlyphSize(14);
+    actionButton->setFixedHeight(26);
+    actionButton->setColors(Theme::AccentBright, Theme::Text, Theme::Text);
+    actionRow->addWidget(actionButton);
+    root->addLayout(actionRow);
+
+    connect(actionButton, &FlatButton::clicked, this, [haveCable]() {
+        if (!haveCable) {
+            QDesktopServices::openUrl(QUrl(QStringLiteral("https://vb-audio.com/Cable/")));
+            return;
+        }
+        // Pagina de sonido de Windows 10/11; si no existe, el panel clasico.
+        if (!QDesktopServices::openUrl(QUrl(QStringLiteral("ms-settings:sound"))))
+            QProcess::startDetached(QStringLiteral("control"), {QStringLiteral("mmsys.cpl")});
+    });
+
+    const auto pushSystemAudio = [this]() {
+        emit systemAudioChanged(m_systemAudio->isChecked(),
+                                m_systemSource->currentData().toByteArray(),
+                                m_systemOutput->currentData().toByteArray());
+    };
+    connect(m_systemAudio, &QCheckBox::toggled, this, pushSystemAudio);
+    connect(m_systemSource, &QComboBox::currentIndexChanged, this, pushSystemAudio);
+    connect(m_systemOutput, &QComboBox::currentIndexChanged, this, pushSystemAudio);
+
+    if (outputs.size() < 2) {
+        m_systemAudio->setEnabled(false);
+        m_systemAudio->setToolTip(Lang::tr(
+            "Hace falta mas de una salida de audio para poder capturar por una y "
+            "reproducir por otra."));
+    }
 
     // ------------------------------------------------------------- idioma
     root->addSpacing(6);
@@ -371,6 +542,21 @@ void SettingsDialog::refreshImageState()
     m_fitMode->setEnabled(has);
     m_transparency->setEnabled(has);
     m_darkening->setEnabled(has);
+}
+
+void SettingsDialog::setSystemAudioStatus(const QString& message, bool ok)
+{
+    if (message.isEmpty())
+        return;
+
+    m_systemAudioStatus->setText(message);
+    m_systemAudioStatus->setStyleSheet(
+        ok ? QString() : QStringLiteral("color: %1;").arg(Theme::Danger.name()));
+
+    if (!ok) {
+        QSignalBlocker blocker(m_systemAudio);
+        m_systemAudio->setChecked(false);
+    }
 }
 
 void SettingsDialog::chooseImage()

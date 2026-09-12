@@ -37,6 +37,11 @@ public:
     QVariant data(const QModelIndex& index, int role) const override;
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
 
+    // Arrastre hacia la lista de reproduccion (y hacia fuera del programa).
+    Qt::ItemFlags flags(const QModelIndex& index) const override;
+    QStringList   mimeTypes() const override;
+    QMimeData*    mimeData(const QModelIndexList& indexes) const override;
+
     void appendTracks(const QVector<TrackInfo>& tracks);
     void clearTracks();
     void replaceTrack(const TrackInfo& info);
