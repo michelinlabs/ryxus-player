@@ -11,8 +11,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMimeData>
+#include <QSet>
 #include <QSortFilterProxyModel>
 #include <QTreeView>
+#include <QUrl>
 #include <QVBoxLayout>
 
 // -------------------------------------------------------- FileTableModel
@@ -116,6 +119,42 @@ QVariant FileTableModel::headerData(int section, Qt::Orientation orientation, in
     }
 }
 
+Qt::ItemFlags FileTableModel::flags(const QModelIndex& index) const
+{
+    const Qt::ItemFlags base = QAbstractTableModel::flags(index);
+    return index.isValid() ? (base | Qt::ItemIsDragEnabled) : base;
+}
+
+QStringList FileTableModel::mimeTypes() const
+{
+    // text/uri-list es lo que entiende la lista de reproduccion, y de paso
+    // permite soltar las pistas en cualquier otro programa.
+    return {QStringLiteral("text/uri-list")};
+}
+
+QMimeData* FileTableModel::mimeData(const QModelIndexList& indexes) const
+{
+    QList<QUrl> urls;
+    QSet<int> seen;   // una fila trae tantos indices como columnas
+
+    for (const QModelIndex& index : indexes) {
+        if (!index.isValid() || seen.contains(index.row()))
+            continue;
+        seen.insert(index.row());
+
+        const TrackInfo& info = trackAt(index.row());
+        if (info.isValid())
+            urls << QUrl::fromLocalFile(info.path);
+    }
+
+    if (urls.isEmpty())
+        return nullptr;
+
+    auto* data = new QMimeData;
+    data->setUrls(urls);
+    return data;
+}
+
 void FileTableModel::appendTracks(const QVector<TrackInfo>& tracks)
 {
     if (tracks.isEmpty())
@@ -186,8 +225,12 @@ void FileListPanel::buildUi()
     m_view->setSortingEnabled(true);
     m_view->setFrameShape(QFrame::NoFrame);
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
+
+    // Arrastre hacia la lista de reproduccion. Solo salida: aqui no se suelta
+    // nada, la carpeta que se ve la manda el arbol.
     m_view->setDragEnabled(true);
     m_view->setDragDropMode(QAbstractItemView::DragOnly);
+    m_view->setDefaultDropAction(Qt::CopyAction);
 
     QHeaderView* header = m_view->header();
     header->setObjectName(QStringLiteral("fileListHeader"));

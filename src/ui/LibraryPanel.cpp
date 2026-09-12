@@ -7,10 +7,14 @@
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 
+#include <QApplication>
 #include <QDir>
 #include <QFileDialog>
-#include <QGuiApplication>
 #include <QFileIconProvider>
+#include <QGuiApplication>
+#include <QIcon>
+#include <QPainter>
+#include <QPixmap>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -24,10 +28,76 @@ namespace {
 constexpr int kPathRole    = Qt::UserRole + 1;
 constexpr int kLoadedRole  = Qt::UserRole + 2;
 constexpr int kIsRootRole  = Qt::UserRole + 3;
+constexpr int kExpandableRole = Qt::UserRole + 4;
 
 // Tope de nodos que despliega un doble clic. Sin el, hacerlo sobre una raiz
 // con miles de subcarpetas dejaria la interfaz colgada recorriendo el disco.
 constexpr int kExpandBudget = 800;
+
+// Hasta donde se baja buscando audio antes de dar una carpeta por vacia.
+constexpr int kAudioSearchDepth = 5;
+
+// Â¿Hay algun archivo de audio aqui dentro, directamente o mas abajo?
+//
+// Se corta en cuanto aparece el primero y se limita la profundidad: sin las
+// dos cosas, una rama honda y sin musica costaria recorrer medio disco solo
+// para decidir si se pinta una fila.
+bool containsAudio(const QString& path, int depth = kAudioSearchDepth)
+{
+    const QDir dir(path);
+    if (!dir.exists())
+        return false;
+
+    const QFileInfoList files =
+        dir.entryInfoList(QDir::Files | QDir::Readable, QDir::NoSort);
+    for (const QFileInfo& file : files) {
+        if (TrackInfo::isSupported(file.absoluteFilePath()))
+            return true;
+    }
+
+    if (depth <= 0)
+        return false;
+
+    const QFileInfoList subdirs = dir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable, QDir::NoSort);
+    for (const QFileInfo& sub : subdirs) {
+        if (containsAudio(sub.absoluteFilePath(), depth - 1))
+            return true;
+    }
+    return false;
+}
+
+// Icono de carpeta con galon delante cuando tiene subcarpetas dentro, para
+// que se vea de un vistazo cuales se pueden abrir y cuales no. El galon apunta
+// a la derecha si esta cerrada y hacia abajo si esta abierta.
+QIcon folderIcon(bool hasChildren, bool expanded)
+{
+    constexpr int kGlyph = 16;
+    constexpr int kChevron = 10;
+    const int width = hasChildren ? kGlyph + kChevron : kGlyph;
+
+    const qreal dpr = qApp ? qApp->devicePixelRatio() : 1.0;
+    QPixmap pm(int(width * dpr), int(kGlyph * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    qreal x = 0.0;
+    if (hasChildren) {
+        Icons::paint(p, expanded ? Icons::ChevronDown : Icons::ChevronRight,
+                     QRectF(0, (kGlyph - kChevron) / 2.0, kChevron, kChevron),
+                     Theme::TextFaint, 1.4);
+        x = kChevron;
+    }
+
+    Icons::paint(p, expanded ? Icons::FolderOpen : Icons::Folder,
+                 QRectF(x, 0, kGlyph, kGlyph), Theme::TextDim, 1.4);
+    p.end();
+
+    return QIcon(pm);
+}
 
 } // namespace
 
@@ -136,6 +206,7 @@ void LibraryPanel::buildUi()
 
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, &LibraryPanel::onSelectionChanged);
     connect(m_tree, &QTreeWidget::itemExpanded,        this, &LibraryPanel::onItemExpanded);
+    connect(m_tree, &QTreeWidget::itemCollapsed,       this, &LibraryPanel::onItemCollapsed);
     connect(m_tree, &QTreeWidget::itemDoubleClicked,   this, &LibraryPanel::onItemDoubleClicked);
     connect(m_tree, &QTreeWidget::customContextMenuRequested,
             this, &LibraryPanel::showTreeContextMenu);
@@ -269,20 +340,34 @@ void LibraryPanel::populate(QTreeWidgetItem* item)
         QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name | QDir::LocaleAware);
 
     for (const QFileInfo& entry : entries) {
+        // Una carpeta sin musica dentro no pinta nada en un reproductor: se
+        // omite, con subcarpetas incluidas.
+        if (!containsAudio(entry.absoluteFilePath()))
+            continue;
+
         auto* child = new QTreeWidgetItem(item);
         child->setText(0, entry.fileName());
         child->setToolTip(0, QDir::toNativeSeparators(entry.absoluteFilePath()));
         child->setData(0, kPathRole, entry.absoluteFilePath());
         child->setData(0, kLoadedRole, false);
         child->setData(0, kIsRootRole, false);
-        child->setIcon(0, Icons::icon(Icons::Folder, Theme::TextDim, 16));
 
-        // Solo se marca como desplegable si de verdad tiene subcarpetas.
-        const QDir sub(entry.absoluteFilePath());
-        if (!sub.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable).isEmpty())
-            child->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
-        else
-            child->setChildIndicatorPolicy(QTreeWidgetItem::DontShowIndicator);
+        // Solo cuenta como desplegable si alguna subcarpeta tiene musica: si
+        // no, el galon prometeria algo que al abrir sale vacio.
+        bool expandable = false;
+        const QFileInfoList subdirs = QDir(entry.absoluteFilePath())
+            .entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable, QDir::NoSort);
+        for (const QFileInfo& sub : subdirs) {
+            if (containsAudio(sub.absoluteFilePath())) {
+                expandable = true;
+                break;
+            }
+        }
+
+        child->setIcon(0, folderIcon(expandable, false));
+        child->setData(0, kExpandableRole, expandable);
+        child->setChildIndicatorPolicy(expandable ? QTreeWidgetItem::ShowIndicator
+                                                  : QTreeWidgetItem::DontShowIndicator);
     }
 }
 
@@ -290,7 +375,13 @@ void LibraryPanel::onItemExpanded(QTreeWidgetItem* item)
 {
     populate(item);
     if (!item->data(0, kIsRootRole).toBool())
-        item->setIcon(0, Icons::icon(Icons::FolderOpen, Theme::TextDim, 16));
+        item->setIcon(0, folderIcon(item->data(0, kExpandableRole).toBool(), true));
+}
+
+void LibraryPanel::onItemCollapsed(QTreeWidgetItem* item)
+{
+    if (!item->data(0, kIsRootRole).toBool())
+        item->setIcon(0, folderIcon(item->data(0, kExpandableRole).toBool(), false));
 }
 
 void LibraryPanel::onItemDoubleClicked(QTreeWidgetItem* item, int)
@@ -299,15 +390,28 @@ void LibraryPanel::onItemDoubleClicked(QTreeWidgetItem* item, int)
     if (path.isEmpty())
         return;
 
-    // Un doble clic abre la rama entera, no solo el primer nivel. Como el
-    // arbol se llena de forma perezosa, hay que ir poblando a medida que se
-    // baja.
+    // El doble clic alterna la rama entera: si estaba cerrada la abre hasta el
+    // fondo, y si estaba abierta la cierra del todo. Como el arbol se llena de
+    // forma perezosa, al abrir hay que ir poblando a medida que se baja.
     QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-    int budget = kExpandBudget;
-    expandBranch(item, budget);
+    if (item->isExpanded()) {
+        collapseBranch(item);
+    } else {
+        int budget = kExpandBudget;
+        expandBranch(item, budget);
+    }
     QGuiApplication::restoreOverrideCursor();
 
     emit folderActivated(path);
+}
+
+void LibraryPanel::collapseBranch(QTreeWidgetItem* item)
+{
+    if (!item)
+        return;
+    for (int i = 0; i < item->childCount(); ++i)
+        collapseBranch(item->child(i));
+    item->setExpanded(false);
 }
 
 void LibraryPanel::expandBranch(QTreeWidgetItem* item, int& budget)

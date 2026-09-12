@@ -176,6 +176,8 @@ void PlayerBar::setPlaying(bool playing)
     // Se resalta el boton que refleja el estado actual.
     m_play->setColors(playing ? Theme::AccentBright : Theme::Text,
                       Theme::AccentBright, Theme::AccentBright);
+    m_play->setToolTip(playing ? Lang::tr("Volver al principio de la pista")
+                               : Lang::tr("Reproducir"));
     m_pause->setColors(playing ? Theme::Wave : Theme::TextFaint,
                        Theme::Text, Theme::AccentBright);
 }

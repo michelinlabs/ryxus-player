@@ -175,6 +175,49 @@ const QHash<QString, QString>& englishTable()
 
         // --- ecualizador --------------------------------------------------
         {QStringLiteral("ECUALIZADOR"),                QStringLiteral("EQUALIZER")},
+        // --- audio del sistema ---------------------------------------------
+        {QStringLiteral("AUDIO DEL SISTEMA"),             QStringLiteral("SYSTEM AUDIO")},
+        {QStringLiteral("Aplicar el ecualizador y los efectos a todo el audio de Windows"),
+         QStringLiteral("Apply the equalizer and effects to all Windows audio")},
+        {QStringLiteral("Capturar de"),                   QStringLiteral("Capture from")},
+        {QStringLiteral("Sacar procesado por"),           QStringLiteral("Send processed audio to")},
+        {QStringLiteral("%1  (predeterminada)"),          QStringLiteral("%1  (default)")},
+        {QStringLiteral("Procesando el audio del sistema."), QStringLiteral("Processing system audio.")},
+        {QStringLiteral("Captura del sistema apagada."),  QStringLiteral("System capture turned off.")},
+        {QStringLiteral("No se pudo abrir la salida elegida."), QStringLiteral("The chosen output could not be opened.")},
+        {QStringLiteral("Windows no dejo capturar la mezcla del sistema."),
+         QStringLiteral("Windows would not allow capturing the system mix.")},
+        {QStringLiteral("No se pudo preparar el buffer de audio."),
+         QStringLiteral("The audio buffer could not be prepared.")},
+
+        // --- capa viva del fondo -------------------------------------------
+        {QStringLiteral("Visualizacion"),              QStringLiteral("Visualization")},
+        {QStringLiteral("Ninguna"),                    QStringLiteral("None")},
+        {QStringLiteral("Barras"),                     QStringLiteral("Bars")},
+        {QStringLiteral("Espejo"),                     QStringLiteral("Mirror")},
+        {QStringLiteral("Onda"),                       QStringLiteral("Wave")},
+        {QStringLiteral("Mandala"),                    QStringLiteral("Mandala")},
+        {QStringLiteral("Anillos"),                    QStringLiteral("Rings")},
+        {QStringLiteral("Nebulosa"),                   QStringLiteral("Nebula")},
+        {QStringLiteral("Opacidad de la imagen"),      QStringLiteral("Image opacity")},
+        {QStringLiteral("Opacidad de la visualizacion"),
+         QStringLiteral("Visualization opacity")},
+        {QStringLiteral("Elegir imagen o GIF..."),     QStringLiteral("Choose image or GIF...")},
+
+        // --- disposicion de paneles y fondo --------------------------------
+        {QStringLiteral("Volver al principio de la pista"), QStringLiteral("Back to the start of the track")},
+        {QStringLiteral("Vumetro sobre el fondo"),        QStringLiteral("VU meter over the background")},
+        {QStringLiteral("Imagenes y animaciones (*.jpg *.jpeg *.png *.bmp *.webp *.gif)"),
+         QStringLiteral("Images and animations (*.jpg *.jpeg *.png *.bmp *.webp *.gif)")},
+        {QStringLiteral(";;Todos los archivos (*)"),      QStringLiteral(";;All files (*)")},
+        {QStringLiteral("Paneles"),                       QStringLiteral("Panels")},
+        {QStringLiteral("Reproduciendo"),                 QStringLiteral("Now playing")},
+        {QStringLiteral("Archivos"),                      QStringLiteral("Files")},
+        {QStringLiteral("Lista de reproduccion"),         QStringLiteral("Playlist")},
+        {QStringLiteral("Intercambiar reproduciendo y el resto"), QStringLiteral("Swap now playing and the rest")},
+        {QStringLiteral("Intercambiar archivos y lista"), QStringLiteral("Swap files and playlist")},
+        {QStringLiteral("Restablecer la disposicion"),    QStringLiteral("Reset the layout")},
+
         // --- editor de etiquetas: campos ampliados -------------------------
         {QStringLiteral("PRINCIPAL"),                     QStringLiteral("MAIN")},
         {QStringLiteral("BPM"),                           QStringLiteral("BPM")},

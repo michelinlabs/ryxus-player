@@ -5,6 +5,7 @@
 #include "core/Lang.h"
 #include "core/Settings.h"
 #include "core/ShellUtils.h"
+#include "core/SystemAudioTap.h"
 #include "core/WaveformWorker.h"
 #include "ui/BackgroundHost.h"
 #include "ui/CoverCropDialog.h"
@@ -23,12 +24,16 @@
 #include "ui/SeekBar.h"
 #include "ui/Theme.h"
 #include "ui/TitleBar.h"
+#include "ui/Visualizations.h"
 
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -76,6 +81,9 @@ MainWindow::MainWindow(QWidget* parent)
     setAttribute(Qt::WA_TranslucentBackground, false);
     setMinimumSize(1100, 640);
 
+    // Soltar pistas o carpetas del Explorador sobre la ventana.
+    setAcceptDrops(true);
+
     m_engine = new AudioEngine(this);
 
     buildUi();
@@ -112,6 +120,7 @@ void MainWindow::buildUi()
     // El widget central pinta el color base y la imagen de fondo; todo lo
     // demas se dibuja encima con alfa.
     m_background = new BackgroundHost(this);
+    m_background->setEngine(m_engine);
     QWidget* central = m_background;
     setCentralWidget(central);
 
@@ -128,25 +137,30 @@ void MainWindow::buildUi()
     // detalles dispone de todo el alto hasta los botones de transporte. El
     // ecualizador se abre solo bajo las otras dos columnas, empezando justo a
     // la derecha del panel izquierdo, en vez de cruzar la ventana entera.
-    auto* body = new QWidget(central);
-    auto* bodyLayout = new QHBoxLayout(body);
-    bodyLayout->setContentsMargins(0, 0, 0, 0);
-    bodyLayout->setSpacing(0);
+    m_bodySplitter = new QSplitter(Qt::Horizontal, central);
+    m_bodySplitter->setObjectName(QStringLiteral("bodySplitter"));
+    m_bodySplitter->setHandleWidth(3);
+    // Colapsables: arrastrar un divisor hasta el borde esconde la columna y
+    // deja ver el fondo, que es justo lo que se quiere poder hacer.
+    m_bodySplitter->setChildrenCollapsible(true);
+    QWidget* body = m_bodySplitter;
 
     m_nowPlaying = new NowPlayingPanel(m_engine, body);
-    bodyLayout->addWidget(m_nowPlaying);
+    m_bodySplitter->addWidget(m_nowPlaying);
 
     auto* rightSide = new QWidget(body);
     auto* rightLayout = new QVBoxLayout(rightSide);
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(0);
 
-    auto* panels = new QWidget(rightSide);
-    auto* panelsLayout = new QHBoxLayout(panels);
-    panelsLayout->setContentsMargins(0, 0, 0, 0);
-    panelsLayout->setSpacing(0);
+    m_panelsSplitter = new QSplitter(Qt::Horizontal, rightSide);
+    m_panelsSplitter->setObjectName(QStringLiteral("panelsSplitter"));
+    m_panelsSplitter->setHandleWidth(3);
+    m_panelsSplitter->setChildrenCollapsible(true);
+    QWidget* panels = m_panelsSplitter;
 
-    auto* centerColumn = new QWidget(panels);
+    m_centerColumn = new QWidget(panels);
+    QWidget* centerColumn = m_centerColumn;
     auto* centerLayout = new QVBoxLayout(centerColumn);
     centerLayout->setContentsMargins(0, 0, 0, 0);
     centerLayout->setSpacing(0);
@@ -163,11 +177,15 @@ void MainWindow::buildUi()
     centerLayout->addWidget(m_centerStack, 1);
     buildCenterColumn();
 
-    panelsLayout->addWidget(centerColumn, 1);
+    m_panelsSplitter->addWidget(centerColumn);
 
     m_playlists = new PlaylistPanel(panels);
-    m_playlists->setFixedWidth(Theme::Metrics::RightPanelWidth);
-    panelsLayout->addWidget(m_playlists);
+    m_playlists->setMinimumWidth(240);
+    m_panelsSplitter->addWidget(m_playlists);
+
+    m_panelsSplitter->setStretchFactor(0, 1);
+    m_panelsSplitter->setStretchFactor(1, 0);
+    m_panelsSplitter->setSizes({700, Theme::Metrics::RightPanelWidth});
 
     rightLayout->addWidget(panels, 1);
 
@@ -176,7 +194,11 @@ void MainWindow::buildUi()
     m_equalizer->hide();
     rightLayout->addWidget(m_equalizer);
 
-    bodyLayout->addWidget(rightSide, 1);
+    m_bodySplitter->addWidget(rightSide);
+    m_bodySplitter->setStretchFactor(0, 0);
+    m_bodySplitter->setStretchFactor(1, 1);
+    m_bodySplitter->setSizes({Theme::Metrics::LeftPanelWidth, 1200});
+
     root->addWidget(body, 1);
 
     // --- barra inferior ----------------------------------------------------
@@ -360,7 +382,7 @@ void MainWindow::wireSignals()
             this, &MainWindow::onCoverExportRequested);
 
     // --- barra inferior ----------------------------------------------------
-    connect(m_playerBar, &PlayerBar::playClicked,  this, &MainWindow::togglePlayPause);
+    connect(m_playerBar, &PlayerBar::playClicked,  this, &MainWindow::onPlayClicked);
     connect(m_playerBar, &PlayerBar::pauseClicked, this, [this]() { m_engine->pause(); });
     connect(m_playerBar, &PlayerBar::stopClicked,      this, &MainWindow::stopPlayback);
     connect(m_playerBar, &PlayerBar::nextClicked,      this, &MainWindow::playNext);
@@ -477,6 +499,26 @@ void MainWindow::restoreSession()
     if (!splitter.isEmpty())
         m_centerSplitter->restoreState(splitter);
 
+    // El orden de las columnas se restablece antes que los tamanos: guardarlos
+    // y devolverlos en distinto orden dejaria cada panel con el ancho del otro.
+    if (Settings::bodySwapped())
+        m_bodySplitter->insertWidget(0, m_bodySplitter->widget(1));
+    if (Settings::panelsSwapped())
+        m_panelsSplitter->insertWidget(0, m_panelsSplitter->widget(1));
+
+    const QByteArray bodyState = Settings::bodySplitterState();
+    if (!bodyState.isEmpty())
+        m_bodySplitter->restoreState(bodyState);
+
+    const QByteArray panelsState = Settings::panelsSplitterState();
+    if (!panelsState.isEmpty())
+        m_panelsSplitter->restoreState(panelsState);
+
+    for (int panel = 0; panel < PanelCount; ++panel) {
+        if (QWidget* widget = panelWidget(panel))
+            widget->setVisible(Settings::panelVisible(QString::fromLatin1(panelKey(panel))));
+    }
+
     const float volume = Settings::volume();
     m_engine->setVolume(volume);
     m_playerBar->setVolume(volume);
@@ -487,6 +529,13 @@ void MainWindow::restoreSession()
 
     m_shuffle = Settings::shuffle();
     m_playerBar->setShuffle(m_shuffle);
+
+    // Si la captura del sistema quedo encendida, se vuelve a levantar. Si el
+    // dispositivo ya no esta, start() falla y se queda apagada sin molestar.
+    if (Settings::systemAudioEnabled()) {
+        applySystemAudio(true, Settings::systemAudioSource(),
+                         Settings::systemAudioOutput());
+    }
 
     m_repeat = static_cast<PlaylistModel::RepeatMode>(qBound(0, Settings::repeatMode(), 2));
     m_playerBar->setRepeatMode(int(m_repeat));
@@ -521,6 +570,8 @@ void MainWindow::saveSession()
 {
     Settings::setWindowGeometry(saveGeometry());
     Settings::setSplitterState(m_centerSplitter->saveState());
+    Settings::setBodySplitterState(m_bodySplitter->saveState());
+    Settings::setPanelsSplitterState(m_panelsSplitter->saveState());
     Settings::setEqPanelVisible(m_equalizer->isVisible());
     Settings::setRepeatMode(int(m_repeat));
     Settings::setShuffle(m_shuffle);
@@ -618,6 +669,23 @@ void MainWindow::playPrevious()
         playPlaylistRow(previous);
 }
 
+void MainWindow::onPlayClicked()
+{
+    // El boton de play no hace de pausa: para eso esta el de al lado. Si ya
+    // esta sonando, vuelve al principio de la pista; si esta en pausa, reanuda.
+    if (m_engine->isPlaying()) {
+        m_engine->seekMs(0);
+        m_playerBar->seekBar()->setPositionMs(0);
+        if (m_loopStartMs >= 0 || m_loopEndMs >= 0) {
+            m_loopStartMs = m_loopEndMs = -1;
+            m_playerBar->setAbLoopActive(false);
+        }
+        return;
+    }
+
+    togglePlayPause();
+}
+
 void MainWindow::togglePlayPause()
 {
     if (m_engine->currentPath().isEmpty()) {
@@ -662,8 +730,17 @@ void MainWindow::onTick()
 
     const bool playing = m_engine->isPlaying();
     m_playerBar->setPlaying(playing);
-    m_nowPlaying->setPlaying(playing);
-    m_equalizer->setAnalyzerActive(m_equalizer->isVisible() && playing);
+
+    // El espectro y la onda siguen al audio, venga de donde venga: si lo que
+    // suena entra por el cable virtual, tambien tienen que moverse.
+    const bool flowing = audioIsFlowing();
+    m_nowPlaying->setPlaying(flowing);
+    m_equalizer->setAnalyzerActive(m_equalizer->isVisible() && flowing);
+}
+
+bool MainWindow::audioIsFlowing() const
+{
+    return m_engine->isPlaying() || (m_systemAudio && m_systemAudio->isRunning());
 }
 
 void MainWindow::cycleRepeatMode()
@@ -1049,28 +1126,72 @@ void MainWindow::deleteFilesPermanently(const QVector<TrackInfo>& tracks)
     onFolderSelected(m_library->currentFolder());
 }
 
+void MainWindow::dragEnterEvent(QDragEnterEvent* event)
+{
+    // Solo se aceptan rutas locales; lo demas se deja pasar a quien toque.
+    if (!event->mimeData()->hasUrls())
+        return;
+
+    for (const QUrl& url : event->mimeData()->urls()) {
+        if (!url.isLocalFile())
+            continue;
+        const QString path = url.toLocalFile();
+        if (QFileInfo(path).isDir() || TrackInfo::isSupported(path)) {
+            event->acceptProposedAction();
+            return;
+        }
+    }
+}
+
+void MainWindow::dropEvent(QDropEvent* event)
+{
+    QStringList paths;
+    for (const QUrl& url : event->mimeData()->urls()) {
+        if (url.isLocalFile())
+            paths << url.toLocalFile();
+    }
+
+    if (paths.isEmpty())
+        return;
+
+    event->acceptProposedAction();
+    openPaths(paths);
+}
+
 void MainWindow::openPaths(const QStringList& paths)
 {
     QStringList files;
+    QString     folderToOpen;   // la que se abre en el arbol y la lista central
+    QString     trackToPlay;    // la pista concreta que arranca
+
     for (const QString& path : paths) {
         const QFileInfo fi(path);
+
         if (fi.isDir()) {
-            // Una carpeta pasada por linea de comandos se abre como raiz.
-            QStringList opened = m_library->openedFolders();
             const QString clean = QDir::cleanPath(fi.absoluteFilePath());
-            if (!opened.contains(clean, Qt::CaseInsensitive)) {
-                opened << clean;
-                Settings::setLibraryFolders(opened);
-                m_library->setOpenedFolders(opened);
-            }
-            m_library->selectFolder(clean);
+            if (folderToOpen.isEmpty())
+                folderToOpen = clean;
+
+            QStringList inFolder;
             QDirIterator it(fi.absoluteFilePath(), QDir::Files | QDir::Readable);
             while (it.hasNext()) {
                 const QString candidate = it.next();
                 if (TrackInfo::isSupported(candidate))
-                    files << candidate;
+                    inFolder << candidate;
             }
+            inFolder.sort(Qt::CaseInsensitive);
+
+            if (trackToPlay.isEmpty() && !inFolder.isEmpty())
+                trackToPlay = inFolder.first();
+            files += inFolder;
+
         } else if (fi.isFile() && TrackInfo::isSupported(path)) {
+            // Soltar un tema abre ademas la carpeta donde vive: asi queda a
+            // mano el resto del disco, que es lo que se suele querer luego.
+            if (folderToOpen.isEmpty())
+                folderToOpen = QDir::cleanPath(fi.absolutePath());
+            if (trackToPlay.isEmpty())
+                trackToPlay = fi.absoluteFilePath();
             files << fi.absoluteFilePath();
         }
     }
@@ -1078,7 +1199,17 @@ void MainWindow::openPaths(const QStringList& paths)
     if (files.isEmpty())
         return;
 
-    files.sort(Qt::CaseInsensitive);
+    // --- la carpeta pasa a estar abierta en la biblioteca ------------------
+    if (!folderToOpen.isEmpty()) {
+        QStringList opened = m_library->openedFolders();
+        if (!opened.contains(folderToOpen, Qt::CaseInsensitive)) {
+            opened << folderToOpen;
+            Settings::setLibraryFolders(opened);
+            m_library->setOpenedFolders(opened);
+        }
+        m_library->selectFolder(folderToOpen);
+        onFolderSelected(folderToOpen);
+    }
 
     auto* playlist = m_playlists->currentPlaylist();
     if (!playlist)
@@ -1086,7 +1217,11 @@ void MainWindow::openPaths(const QStringList& paths)
 
     const int firstRow = playlist->rowCount();
     playlist->appendFiles(files);
-    playPlaylistRow(firstRow);
+
+    // Suena la pista que se solto, no la primera de la carpeta.
+    const int target = trackToPlay.isEmpty() ? firstRow
+                                             : playlist->indexOfPath(trackToPlay);
+    playPlaylistRow(target >= 0 ? target : firstRow);
 }
 
 void MainWindow::openFilesDialog()
@@ -1120,10 +1255,14 @@ void MainWindow::applyBackgroundSettings()
     m_background->setMode(static_cast<BackgroundHost::Mode>(
         qBound(0, Settings::backgroundMode(), 3)));
     m_background->setDarkening(Settings::backgroundDarkening());
+    m_background->setImageOpacity(Settings::backgroundImageOpacity());
+    m_background->setVisualOpacity(Settings::backgroundVisualOpacity());
+    m_background->setVisualization(Settings::backgroundVisualization());
 
-    // Sin imagen no tiene sentido volver translucidos los paneles: solo
-    // dejarian ver el color base y la interfaz perderia contraste.
-    const float transparency = m_background->hasImage()
+    // Sin nada detras no tiene sentido volver translucidos los paneles: solo
+    // dejarian ver el color base y la interfaz perderia contraste. El vumetro
+    // cuenta como fondo, que para eso ocupa la ventana entera.
+    const float transparency = m_background->hasBackdrop()
         ? Settings::backgroundTransparency() / 100.0f
         : 0.0f;
 
@@ -1150,7 +1289,7 @@ void MainWindow::chooseBackgroundImage()
 
     const QString file = QFileDialog::getOpenFileName(
         this, Lang::tr("Elegir imagen de fondo"), start,
-        Lang::tr("Imagenes (*.jpg *.jpeg *.png *.bmp *.webp *.gif);;Todos los archivos (*)"));
+        BackgroundHost::imageFilter() + Lang::tr(";;Todos los archivos (*)"));
 
     if (file.isEmpty())
         return;
@@ -1189,6 +1328,28 @@ void MainWindow::setBackgroundDarkening(int percent)
     m_background->setDarkening(percent);
 }
 
+void MainWindow::setBackgroundVisualization(int index)
+{
+    Settings::setBackgroundVisualization(index);
+    m_background->setVisualization(index);
+
+    // La capa viva cuenta como fondo: al encenderla o apagarla hay que rehacer
+    // la transparencia de los paneles.
+    applyBackgroundSettings();
+}
+
+void MainWindow::setBackgroundImageOpacity(int percent)
+{
+    Settings::setBackgroundImageOpacity(percent);
+    m_background->setImageOpacity(percent);
+}
+
+void MainWindow::setBackgroundVisualOpacity(int percent)
+{
+    Settings::setBackgroundVisualOpacity(percent);
+    m_background->setVisualOpacity(percent);
+}
+
 void MainWindow::setBackgroundMode(int mode)
 {
     Settings::setBackgroundMode(mode);
@@ -1201,6 +1362,14 @@ void MainWindow::openSettings()
         m_settings = new SettingsDialog(this);
 
         connect(m_settings, &SettingsDialog::themeChanged, this, &MainWindow::applyTheme);
+        connect(m_settings, &SettingsDialog::systemAudioChanged,
+                this, &MainWindow::applySystemAudio);
+        connect(m_settings, &SettingsDialog::visualizationChanged,
+                this, &MainWindow::setBackgroundVisualization);
+        connect(m_settings, &SettingsDialog::imageOpacityChanged,
+                this, &MainWindow::setBackgroundImageOpacity);
+        connect(m_settings, &SettingsDialog::visualOpacityChanged,
+                this, &MainWindow::setBackgroundVisualOpacity);
         connect(m_settings, &SettingsDialog::restartRequested,
                 this, &MainWindow::restartForLanguage);
 
@@ -1245,6 +1414,42 @@ void MainWindow::applyTheme(const QString& paletteId)
 
     if (m_settings)
         m_settings->update();
+}
+
+void MainWindow::applySystemAudio(bool enabled, const QByteArray& source,
+                                  const QByteArray& output)
+{
+    Settings::setSystemAudioSource(source);
+    Settings::setSystemAudioOutput(output);
+
+    if (!m_systemAudio) {
+        m_systemAudio = new SystemAudioTap(this);
+        // El espectro, la onda y el fondo tienen que moverse tambien con lo
+        // que entra por el cable, no solo con lo que reproduce el programa.
+        m_systemAudio->setVisualSink(m_engine);
+    }
+
+    if (!enabled) {
+        m_systemAudio->stop();
+        Settings::setSystemAudioEnabled(false);
+        if (m_settings)
+            m_settings->setSystemAudioStatus(Lang::tr("Captura del sistema apagada."), true);
+        return;
+    }
+
+    QString error;
+    if (!m_systemAudio->start(source, output, &error)) {
+        Settings::setSystemAudioEnabled(false);
+        if (m_settings)
+            m_settings->setSystemAudioStatus(error, false);
+        return;
+    }
+
+    Settings::setSystemAudioEnabled(true);
+    if (m_settings) {
+        m_settings->setSystemAudioStatus(
+            Lang::tr("Procesando el audio del sistema."), true);
+    }
 }
 
 void MainWindow::restartForLanguage()
@@ -1295,6 +1500,40 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
 
     menu.addSeparator();
 
+    // --- submenu de paneles ------------------------------------------------
+    QMenu* panels = menu.addMenu(Icons::icon(Icons::Grip, iconColor),
+                                 Lang::tr("Paneles"));
+    panels->setFont(Theme::uiFont(9));
+
+    const struct { int panel; const char* label; } kPanels[] = {
+        {PanelNowPlaying, "Reproduciendo"},
+        {PanelFiles,      "Archivos"},
+        {PanelPlaylist,   "Lista de reproduccion"},
+    };
+
+    for (const auto& entry : kPanels) {
+        QWidget* widget = panelWidget(entry.panel);
+        QAction* action = panels->addAction(Lang::tr(entry.label));
+        action->setCheckable(true);
+        action->setChecked(widget && widget->isVisible());
+        const int panel = entry.panel;
+        connect(action, &QAction::toggled, this, [this, panel](bool on) {
+            setPanelVisible(panel, on);
+        });
+    }
+
+    panels->addSeparator();
+    panels->addAction(Lang::tr("Intercambiar reproduciendo y el resto"),
+                      this, &MainWindow::swapBodyColumns);
+    panels->addAction(Lang::tr("Intercambiar archivos y lista"),
+                      this, &MainWindow::swapPanelColumns);
+    panels->addSeparator();
+    panels->addAction(Icons::icon(Icons::Revert, iconColor),
+                      Lang::tr("Restablecer la disposicion"),
+                      this, &MainWindow::resetPanelLayout);
+
+    menu.addSeparator();
+
     menu.addAction(Icons::icon(Icons::Settings, iconColor),
                    Lang::tr("Configuracion..."),
                    this, &MainWindow::openSettings);
@@ -1310,6 +1549,30 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
     QAction* clearAction = background->addAction(Lang::tr("Quitar imagen"),
                                                  this, &MainWindow::clearBackgroundImage);
     clearAction->setEnabled(m_background->hasImage());
+
+    background->addSeparator();
+
+    // Submenu de la capa viva: las mismas visualizaciones que en Configuracion,
+    // a mano desde el menu principal.
+    QMenu* visualMenu = background->addMenu(Lang::tr("Visualizacion"));
+    visualMenu->setFont(Theme::uiFont(9));
+    auto* visualGroup = new QActionGroup(visualMenu);
+    visualGroup->setExclusive(true);
+
+    const auto addVisual = [&](int index, const QString& label) {
+        QAction* action = visualMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(m_background->visualization() == index);
+        visualGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, index]() {
+            setBackgroundVisualization(index);
+        });
+    };
+
+    addVisual(-1, Lang::tr("Ninguna"));
+    visualMenu->addSeparator();
+    for (int i = 0; i < Visualizations::count(); ++i)
+        addVisual(i, Lang::tr(Visualizations::info(i).name));
 
     background->addSeparator();
 
@@ -1449,12 +1712,72 @@ void MainWindow::clampIntoWorkArea()
         setGeometry(frame);
 }
 
+const char* MainWindow::panelKey(int panel)
+{
+    switch (panel) {
+    case PanelNowPlaying: return "nowPlaying";
+    case PanelFiles:      return "files";
+    case PanelPlaylist:   return "playlist";
+    }
+    return "";
+}
+
+QWidget* MainWindow::panelWidget(int panel) const
+{
+    switch (panel) {
+    case PanelNowPlaying: return m_nowPlaying;
+    case PanelFiles:      return m_centerColumn;
+    case PanelPlaylist:   return m_playlists;
+    }
+    return nullptr;
+}
+
+void MainWindow::setPanelVisible(int panel, bool visible)
+{
+    QWidget* widget = panelWidget(panel);
+    if (!widget)
+        return;
+
+    // Esconder una columna no la destruye: el divisor la vuelve a colocar en
+    // su sitio, con el tamano que tenia, en cuanto se marca de nuevo.
+    widget->setVisible(visible);
+    Settings::setPanelVisible(QString::fromLatin1(panelKey(panel)), visible);
+}
+
+void MainWindow::swapBodyColumns()
+{
+    // insertWidget sobre un hijo que ya esta dentro lo mueve de sitio.
+    m_bodySplitter->insertWidget(0, m_bodySplitter->widget(1));
+    Settings::setBodySwapped(!Settings::bodySwapped());
+}
+
+void MainWindow::swapPanelColumns()
+{
+    m_panelsSplitter->insertWidget(0, m_panelsSplitter->widget(1));
+    Settings::setPanelsSwapped(!Settings::panelsSwapped());
+}
+
+void MainWindow::resetPanelLayout()
+{
+    if (Settings::bodySwapped())
+        swapBodyColumns();
+    if (Settings::panelsSwapped())
+        swapPanelColumns();
+
+    for (int panel = 0; panel < PanelCount; ++panel)
+        setPanelVisible(panel, true);
+
+    m_bodySplitter->setSizes({Theme::Metrics::LeftPanelWidth, 1200});
+    m_panelsSplitter->setSizes({700, Theme::Metrics::RightPanelWidth});
+    m_centerSplitter->setSizes({Theme::Metrics::TreePanelWidth, 700});
+}
+
 void MainWindow::toggleEqualizerPanel(bool visible)
 {
     m_equalizer->setVisible(visible);
     Settings::setEqPanelVisible(visible);
     // El plot solo consume FFT mientras se ve y hay audio.
-    m_equalizer->setAnalyzerActive(visible && m_engine->isPlaying());
+    m_equalizer->setAnalyzerActive(visible && audioIsFlowing());
 }
 
 // --- redimensionado de la ventana sin marco --------------------------------

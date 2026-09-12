@@ -95,6 +95,19 @@ QSlider#effectSlider::handle:horizontal:hover { background: @accentBright; }
 QSplitter#centerSplitter::handle { background-color: @chrome; }
 QSplitter#centerSplitter::handle:hover { background-color: @accent; }
 
+/* Divisores de las columnas: apenas se ven en reposo y se marcan al pasar por
+   encima, que es cuando importan. */
+QSplitter#bodySplitter::handle,
+QSplitter#panelsSplitter::handle {
+    background-color: @border;
+}
+QSplitter#bodySplitter::handle:hover,
+QSplitter#panelsSplitter::handle:hover,
+QSplitter#bodySplitter::handle:pressed,
+QSplitter#panelsSplitter::handle:pressed {
+    background-color: @accentBright;
+}
+
 QFrame#eqDivider { color: @border; background-color: @border; max-width: 1px; }
 
 /* ------------------------------------------------------- panel izquierdo -- */

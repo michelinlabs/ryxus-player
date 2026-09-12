@@ -3,6 +3,8 @@
 #include "core/TrackInfo.h"
 
 #include <QAbstractListModel>
+
+class QMimeData;
 #include <QStringList>
 #include <QVector>
 
@@ -31,6 +33,18 @@ public:
     Qt::ItemFlags flags(const QModelIndex& index) const override;
     bool     removeRows(int row, int count, const QModelIndex& parent = QModelIndex()) override;
     Qt::DropActions supportedDropActions() const override;
+
+    // Pistas soltadas desde la lista de archivos, desde el Explorador o desde
+    // cualquier otro programa que exporte rutas.
+    QStringList mimeTypes() const override;
+    QMimeData*  mimeData(const QModelIndexList& indexes) const override;
+    bool canDropMimeData(const QMimeData* data, Qt::DropAction action,
+                         int row, int column, const QModelIndex& parent) const override;
+    bool dropMimeData(const QMimeData* data, Qt::DropAction action,
+                      int row, int column, const QModelIndex& parent) override;
+
+    // Como appendFiles, pero colocando en una posicion concreta.
+    int insertFiles(int row, const QStringList& paths);
 
     // --- contenido ---------------------------------------------------------
     QString name() const { return m_name; }

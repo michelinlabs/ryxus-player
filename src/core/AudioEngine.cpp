@@ -27,6 +27,7 @@ AudioEngine::AudioEngine(QObject* parent)
 {
     m_equalizer.prepare(kDeviceSampleRate);
     m_effects.prepare(kDeviceSampleRate);
+    m_limiter.prepare(kDeviceSampleRate, kDeviceChannels);
 
     auto* dev = new ma_device();
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
@@ -103,6 +104,7 @@ bool AudioEngine::open(const QString& path)
         m_decoder = dec;
         m_equalizer.prepare(kDeviceSampleRate);
         m_effects.prepare(kDeviceSampleRate);
+        m_limiter.prepare(kDeviceSampleRate, kDeviceChannels);
     }
 
     m_currentPath = path;
@@ -218,6 +220,28 @@ bool AudioEngine::takeFinishedFlag()
     return m_finished.exchange(false, std::memory_order_relaxed);
 }
 
+void AudioEngine::pushVisualSamples(const float* interleaved, unsigned frameCount, int channels)
+{
+    if (!interleaved || frameCount == 0 || channels <= 0)
+        return;
+
+    // Lo que suena en el propio reproductor manda: si esta reproduciendo, el
+    // visualizador ya se esta alimentando desde render() y meter aqui otra
+    // fuente solo mezclaria dos cosas distintas.
+    if (state() == State::Playing)
+        return;
+
+    unsigned write = m_visualWrite.load(std::memory_order_relaxed);
+    for (unsigned f = 0; f < frameCount; ++f) {
+        float mono = 0.0f;
+        for (int c = 0; c < channels; ++c)
+            mono += interleaved[size_t(f) * size_t(channels) + size_t(c)];
+        m_visual[write] = mono / float(channels);
+        write = (write + 1) % kVisualBufferSize;
+    }
+    m_visualWrite.store(write, std::memory_order_relaxed);
+}
+
 void AudioEngine::copyVisualSamples(float* out, int count) const
 {
     if (!out || count <= 0)
@@ -266,6 +290,11 @@ void AudioEngine::render(float* output, unsigned frameCount)
 
     // --- rack de efectos ---------------------------------------------------
     m_effects.process(output, static_cast<unsigned>(framesRead), kDeviceChannels);
+
+    // --- limitador ---------------------------------------------------------
+    // Ultimo paso antes del volumen: garantiza que nada salga por encima de
+    // 0 dBFS sin meter distorsion cuando la senal ya venia dentro de rango.
+    m_limiter.process(output, static_cast<unsigned>(framesRead), kDeviceChannels);
 
     // --- alimenta el visualizador (mezcla a mono) -------------------------
     // Se toma ANTES del volumen: el analizador debe mostrar el efecto del

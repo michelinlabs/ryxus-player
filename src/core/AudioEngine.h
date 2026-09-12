@@ -2,6 +2,7 @@
 
 #include "core/Effects.h"
 #include "core/Equalizer.h"
+#include "core/Limiter.h"
 
 #include <QObject>
 #include <QString>
@@ -16,8 +17,8 @@
 // modo que cambiar de pista no reinicia el dispositivo (sin cortes ni clics).
 //
 // Cadena de proceso en el callback de audio:
-//     decodificador -> ecualizador (12 bandas) -> efectos -> volumen ->
-//     visualizador
+//     decodificador -> ecualizador (12 bandas) -> efectos -> limitador ->
+//     volumen -> visualizador
 class AudioEngine : public QObject {
     Q_OBJECT
 
@@ -63,6 +64,15 @@ public:
     // Copia las ultimas `count` muestras mono para el visualizador.
     void copyVisualSamples(float* out, int count) const;
 
+    // Alimenta el buffer del visualizador desde fuera del motor.
+    //
+    // Lo usa la captura del audio del sistema: asi el espectro del ecualizador,
+    // la onda del panel izquierdo y las visualizaciones del fondo reaccionan a
+    // lo que entra por el cable virtual, no solo a lo que reproduce el
+    // programa. Se ignora mientras el motor este sonando, para que las dos
+    // fuentes no se pisen.
+    void pushVisualSamples(const float* interleaved, unsigned frameCount, int channels);
+
     // Devuelve true una sola vez, cuando la pista llego al final.
     bool takeFinishedFlag();
 
@@ -88,6 +98,7 @@ private:
 
     Equalizer m_equalizer;
     Effects   m_effects;
+    Limiter   m_limiter;
 
     std::atomic<State>  m_state{State::Stopped};
     std::atomic<float>  m_volume{0.8f};

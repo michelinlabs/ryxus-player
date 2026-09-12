@@ -285,12 +285,72 @@ void setEffectsRackOpen(bool value)
     store().setValue(QStringLiteral("effects/rackOpen"), value);
 }
 
+bool systemAudioEnabled()
+{
+    return store().value(QStringLiteral("systemAudio/enabled"), false).toBool();
+}
+void setSystemAudioEnabled(bool v)
+{
+    store().setValue(QStringLiteral("systemAudio/enabled"), v);
+}
+
+QByteArray systemAudioSource()
+{
+    return store().value(QStringLiteral("systemAudio/source")).toByteArray();
+}
+void setSystemAudioSource(const QByteArray& id)
+{
+    store().setValue(QStringLiteral("systemAudio/source"), id);
+}
+
+QByteArray systemAudioOutput()
+{
+    return store().value(QStringLiteral("systemAudio/output")).toByteArray();
+}
+void setSystemAudioOutput(const QByteArray& id)
+{
+    store().setValue(QStringLiteral("systemAudio/output"), id);
+}
+
 // --- interfaz --------------------------------------------------------------
 QByteArray windowGeometry() { return store().value(QStringLiteral("ui/geometry")).toByteArray(); }
 void setWindowGeometry(const QByteArray& v) { store().setValue(QStringLiteral("ui/geometry"), v); }
 
 QByteArray splitterState() { return store().value(QStringLiteral("ui/splitter")).toByteArray(); }
 void setSplitterState(const QByteArray& v) { store().setValue(QStringLiteral("ui/splitter"), v); }
+
+QByteArray bodySplitterState()
+{
+    return store().value(QStringLiteral("ui/bodySplitter")).toByteArray();
+}
+void setBodySplitterState(const QByteArray& v)
+{
+    store().setValue(QStringLiteral("ui/bodySplitter"), v);
+}
+
+QByteArray panelsSplitterState()
+{
+    return store().value(QStringLiteral("ui/panelsSplitter")).toByteArray();
+}
+void setPanelsSplitterState(const QByteArray& v)
+{
+    store().setValue(QStringLiteral("ui/panelsSplitter"), v);
+}
+
+bool bodySwapped()          { return store().value(QStringLiteral("ui/bodySwapped"), false).toBool(); }
+void setBodySwapped(bool v) { store().setValue(QStringLiteral("ui/bodySwapped"), v); }
+
+bool panelsSwapped()          { return store().value(QStringLiteral("ui/panelsSwapped"), false).toBool(); }
+void setPanelsSwapped(bool v) { store().setValue(QStringLiteral("ui/panelsSwapped"), v); }
+
+bool panelVisible(const QString& id)
+{
+    return store().value(QStringLiteral("ui/panel/") + id, true).toBool();
+}
+void setPanelVisible(const QString& id, bool v)
+{
+    store().setValue(QStringLiteral("ui/panel/") + id, v);
+}
 
 bool eqPanelVisible() { return store().value(QStringLiteral("ui/eqPanel"), false).toBool(); }
 void setEqPanelVisible(bool v) { store().setValue(QStringLiteral("ui/eqPanel"), v); }
@@ -340,6 +400,33 @@ int backgroundDarkening()
 void setBackgroundDarkening(int percent)
 {
     store().setValue(QStringLiteral("background/darkening"), qBound(0, percent, 90));
+}
+
+int backgroundVisualization()
+{
+    return store().value(QStringLiteral("background/visualization"), -1).toInt();
+}
+void setBackgroundVisualization(int index)
+{
+    store().setValue(QStringLiteral("background/visualization"), index);
+}
+
+int backgroundImageOpacity()
+{
+    return qBound(0, store().value(QStringLiteral("background/imageOpacity"), 100).toInt(), 100);
+}
+void setBackgroundImageOpacity(int percent)
+{
+    store().setValue(QStringLiteral("background/imageOpacity"), qBound(0, percent, 100));
+}
+
+int backgroundVisualOpacity()
+{
+    return qBound(0, store().value(QStringLiteral("background/visualOpacity"), 70).toInt(), 100);
+}
+void setBackgroundVisualOpacity(int percent)
+{
+    store().setValue(QStringLiteral("background/visualOpacity"), qBound(0, percent, 100));
 }
 
 int backgroundMode()
