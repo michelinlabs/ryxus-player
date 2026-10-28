@@ -17,6 +17,7 @@
 #include "ui/MetadataEditor.h"
 #include "ui/TrackDetails.h"
 #include "ui/NowPlayingPanel.h"
+#include "ui/PanelDock.h"
 #include "ui/PlayerBar.h"
 #include "ui/PlaylistPanel.h"
 #include "ui/RibbonTabBar.h"
@@ -24,6 +25,11 @@
 #include "ui/SeekBar.h"
 #include "ui/Theme.h"
 #include "ui/TitleBar.h"
+#include "ui/VideoMasks.h"
+#include "ui/VideoPanel.h"
+#include "ui/VideoFilterPanel.h"
+#include "ui/SubtitleStyle.h"
+#include "core/Subtitles.h"
 #include "ui/Visualizations.h"
 
 #include <QActionGroup>
@@ -34,16 +40,22 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
+#include <QKeyEvent>
+#include <QMoveEvent>
+#include <QCryptographicHash>
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QGuiApplication>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QScreen>
 #include <QMouseEvent>
 #include <QProcess>
+#include <QResizeEvent>
 #include <QSettings>
 #include <QShortcut>
 #include <QSlider>
@@ -52,10 +64,31 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
+#include <QElapsedTimer>
+#include <QTextStream>
+#include <memory>
+#include <QToolTip>
+#include <QAbstractItemView>
+#include <QAbstractSlider>
+#include <QAbstractSpinBox>
+#include <QColorDialog>
+#include <QComboBox>
+#include <QKeySequenceEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidgetAction>
 #include <QWindow>
+
+#ifdef Q_OS_WIN
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#  include <dbt.h>
+#  include <shellapi.h>
+#endif
 
 namespace {
 constexpr int kResizeBorder = 6;   // franja sensible al redimensionado
@@ -70,6 +103,72 @@ QString uninstallerPath()
     const QStringList found = dir.entryList({QStringLiteral("unins*.exe")},
                                             QDir::Files, QDir::Name);
     return found.isEmpty() ? QString() : dir.absoluteFilePath(found.last());
+}
+
+// Huella de la combinacion de monitores: cuales hay, a que resolucion real y
+// donde esta cada uno. Se usa como clave para recordar la ventana en cada
+// situacion (Settings::WindowPlacement).
+QString currentScreenKey()
+{
+    QStringList parts;
+    for (const QScreen* screen : QGuiApplication::screens()) {
+        // En pixeles fisicos: la escala de Qt depende de la propia
+        // resolucion y no debe cambiar la huella.
+        const qreal dpr = screen->devicePixelRatio();
+        const QRect g = screen->geometry();
+        parts << QStringLiteral("%1|%2|%3|%4x%5@%6,%7")
+                     .arg(screen->manufacturer(), screen->model(), screen->serialNumber())
+                     .arg(qRound(g.width() * dpr)).arg(qRound(g.height() * dpr))
+                     .arg(qRound(g.x() * dpr)).arg(qRound(g.y() * dpr));
+    }
+    parts.sort();   // el orden de la lista de Qt no significa nada
+    if (const QScreen* primary = QGuiApplication::primaryScreen())
+        parts << QStringLiteral("primary=") + primary->name();
+
+    return QString::fromLatin1(
+        QCryptographicHash::hash(parts.join(QLatin1Char(';')).toUtf8(),
+                                 QCryptographicHash::Sha1).toHex().left(16));
+}
+
+QList<QByteArray> connectedOutputIds()
+{
+    QList<QByteArray> ids;
+    for (const SystemAudioTap::Device& device : SystemAudioTap::outputDevices())
+        ids << device.id;
+    return ids;
+}
+
+// Interfaz a la que hay que pasar lo procesado segun lo que hay conectado
+// ahora (`present`) y lo que habia antes (`before`). Vacio = quedarse donde
+// se esta. Solo se eligen salidas ya usadas alguna vez (Settings::knownOutputs).
+QByteArray chooseInterface(const QList<QByteArray>& present, const QList<QByteArray>& before)
+{
+    if (!Settings::autoSwitchOutputs())
+        return {};
+
+    const QByteArray current = Settings::systemAudioOutput();
+    const QByteArray source  = Settings::systemAudioSource();
+    const QList<QByteArray> known = Settings::knownOutputs();   // reciente primero
+
+    const auto usable = [&](const QByteArray& id) {
+        return present.contains(id) && id != source;
+    };
+
+    // La ultima conectada manda. Si llegan varias a la vez, la usada mas
+    // recientemente.
+    for (const QByteArray& id : known) {
+        if (usable(id) && !before.contains(id))
+            return id == current ? QByteArray() : id;
+    }
+
+    // Se fue la que se usaba: la conocida mas reciente que siga conectada.
+    if (!current.isEmpty() && !present.contains(current)) {
+        for (const QByteArray& id : known) {
+            if (usable(id))
+                return id;
+        }
+    }
+    return {};
 }
 }
 
@@ -91,6 +190,34 @@ MainWindow::MainWindow(QWidget* parent)
     installShortcuts();
     restoreSession();
 
+    // Seguimiento de la ventana por combinacion de monitores: se apunta cada
+    // cambio y, si se conecta, quita o cambia de resolucion un monitor, se
+    // recupera lo que hubiera para la combinacion nueva.
+    m_placementSave = new QTimer(this);
+    m_placementSave->setSingleShot(true);
+    m_placementSave->setInterval(1000);
+    connect(m_placementSave, &QTimer::timeout, this, &MainWindow::saveWindowPlacement);
+
+    // Windows tarda un momento en recolocar las ventanas: se espera a que
+    // termine antes de poner la nuestra donde toca.
+    m_screenSetup = new QTimer(this);
+    m_screenSetup->setSingleShot(true);
+    m_screenSetup->setInterval(800);
+    connect(m_screenSetup, &QTimer::timeout, this, &MainWindow::onScreenSetupChanged);
+
+    const auto setupChanging = [this]() {
+        m_placementSave->stop();
+        m_screenSetup->start();
+    };
+    connect(qApp, &QGuiApplication::screenAdded, this, [this, setupChanging](QScreen* added) {
+        watchScreen(added);
+        setupChanging();
+    });
+    connect(qApp, &QGuiApplication::screenRemoved, this, setupChanging);
+    connect(qApp, &QGuiApplication::primaryScreenChanged, this, setupChanging);
+    for (QScreen* screen : QGuiApplication::screens())
+        watchScreen(screen);
+
     if (!m_engine->isInitialized()) {
         QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
                              Lang::tr("%1\n\nLa interfaz funciona, pero no habra sonido.")
@@ -98,6 +225,52 @@ MainWindow::MainWindow(QWidget* parent)
     }
 
     qApp->installEventFilter(this);
+
+    // RYXUS_PERF_LOG=<archivo>: cada 2 s se apunta cuanto se bloqueo el hilo
+    // de la interfaz, los cortes de audio y los fotogramas de video. Es la
+    // herramienta para comprobar que una optimizacion sirve de algo.
+    if (const QString log = qEnvironmentVariable("RYXUS_PERF_LOG"); !log.isEmpty()) {
+        auto* probe = new QTimer(this);
+        probe->setInterval(10);
+        auto clock = std::make_shared<QElapsedTimer>();
+        auto window = std::make_shared<QElapsedTimer>();
+        auto maxGap = std::make_shared<qint64>(0);
+        auto stalls = std::make_shared<int>(0);
+        clock->start();
+        window->start();
+        connect(probe, &QTimer::timeout, this, [=]() {
+            const qint64 gap = clock->restart();
+            *maxGap = std::max(*maxGap, gap);
+            if (gap > 50)
+                ++*stalls;
+            if (window->elapsed() < 2000)
+                return;
+            int received = 0, painted = 0;
+            m_video->takeFrameStats(&received, &painted);
+            QFile file(log);
+            if (file.open(QIODevice::Append | QIODevice::Text)) {
+                QTextStream(&file) << "maxGapMs=" << *maxGap << " stalls50=" << *stalls
+                                   << " audioUnderruns=" << m_engine->takeStreamUnderruns()
+                                   << " framesIn=" << received << " framesPainted=" << painted
+                                   << " pos=" << m_engine->positionMs() << "\n";
+            }
+            *maxGap = 0;
+            *stalls = 0;
+            window->restart();
+        });
+        probe->start();
+    }
+
+    // Siempre arranca maximizado (contra el area util: la barra de tareas,
+    // este donde este, queda a la vista). Lo restaurado arriba es el tamano
+    // al que se vuelve al desmaximizar. En diferido, con la ventana ya en su
+    // monitor.
+    QTimer::singleShot(0, this, [this]() {
+        if (!isWindowMaximized())
+            toggleMaximized();
+        else
+            fitMaximizedToWorkArea();
+    });
 }
 
 MainWindow::~MainWindow()
@@ -131,33 +304,31 @@ void MainWindow::buildUi()
     m_titleBar = new TitleBar(central);
     root->addWidget(m_titleBar);
 
-    // --- cuerpo ------------------------------------------------------------
+    // --- cuerpo: paneles acoplables ----------------------------------------
     //
-    // La columna izquierda llega hasta la barra inferior: asi la ficha de
-    // detalles dispone de todo el alto hasta los botones de transporte. El
-    // ecualizador se abre solo bajo las otras dos columnas, empezando justo a
-    // la derecha del panel izquierdo, en vez de cruzar la ventana entera.
-    m_bodySplitter = new QSplitter(Qt::Horizontal, central);
-    m_bodySplitter->setObjectName(QStringLiteral("bodySplitter"));
-    m_bodySplitter->setHandleWidth(3);
-    // Colapsables: arrastrar un divisor hasta el borde esconde la columna y
-    // deja ver el fondo, que es justo lo que se quiere poder hacer.
-    m_bodySplitter->setChildrenCollapsible(true);
-    QWidget* body = m_bodySplitter;
+    // Los paneles viven en un QMainWindow interno, sin marco ni fondo, entre
+    // la barra de titulo y la de reproduccion. Asi se mueven, se agrupan en
+    // pestanas, flotan y se estiran como en Photoshop, y el fondo de la
+    // ventana se sigue viendo a traves de ellos. La disposicion de partida la
+    // pone applyLayoutPreset() o la que se guardo (restoreSession).
+    m_dockHost = new QMainWindow(central);
+    // QMainWindow se crea siempre como ventana aparte, aunque tenga padre:
+    // hay que convertirlo en un widget hijo para que vaya dentro del layout.
+    m_dockHost->setWindowFlags(Qt::Widget);
+    m_dockHost->setObjectName(QStringLiteral("dockHost"));
+    m_dockHost->setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks
+                               | QMainWindow::AllowTabbedDocks);
+    m_dockHost->setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
 
-    m_nowPlaying = new NowPlayingPanel(m_engine, body);
-    m_bodySplitter->addWidget(m_nowPlaying);
+    // Qt pide un widget central aunque sea de relleno. Oculto no ocupa sitio
+    // y los paneles se reparten toda la ventana.
+    auto* placeholder = new QWidget(m_dockHost);
+    placeholder->hide();
+    m_dockHost->setCentralWidget(placeholder);
 
-    auto* rightSide = new QWidget(body);
-    auto* rightLayout = new QVBoxLayout(rightSide);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    rightLayout->setSpacing(0);
+    QWidget* panels = m_dockHost;
 
-    m_panelsSplitter = new QSplitter(Qt::Horizontal, rightSide);
-    m_panelsSplitter->setObjectName(QStringLiteral("panelsSplitter"));
-    m_panelsSplitter->setHandleWidth(3);
-    m_panelsSplitter->setChildrenCollapsible(true);
-    QWidget* panels = m_panelsSplitter;
+    m_nowPlaying = new NowPlayingPanel(m_engine, panels);
 
     m_centerColumn = new QWidget(panels);
     QWidget* centerColumn = m_centerColumn;
@@ -177,29 +348,40 @@ void MainWindow::buildUi()
     centerLayout->addWidget(m_centerStack, 1);
     buildCenterColumn();
 
-    m_panelsSplitter->addWidget(centerColumn);
-
     m_playlists = new PlaylistPanel(panels);
     m_playlists->setMinimumWidth(240);
-    m_panelsSplitter->addWidget(m_playlists);
 
-    m_panelsSplitter->setStretchFactor(0, 1);
-    m_panelsSplitter->setStretchFactor(1, 0);
-    m_panelsSplitter->setSizes({700, Theme::Metrics::RightPanelWidth});
+    m_equalizer = new EqualizerPanel(&m_engine->equalizer(), m_engine, panels);
 
-    rightLayout->addWidget(panels, 1);
+    // Los identificadores son los que se guardan en las disposiciones: no
+    // cambiarlos o las guardadas dejan de encontrar sus paneles.
+    m_docks[DockNowPlaying] = new PanelDock(Lang::tr("Reproduciendo"),
+        QStringLiteral("dockNowPlaying"), m_nowPlaying, m_dockHost);
+    m_docks[DockFiles] = new PanelDock(Lang::tr("Archivos"),
+        QStringLiteral("dockFiles"), centerColumn, m_dockHost);
+    m_docks[DockPlaylist] = new PanelDock(Lang::tr("Lista de reproduccion"),
+        QStringLiteral("dockPlaylist"), m_playlists, m_dockHost);
+    m_docks[DockEqualizer] = new PanelDock(Lang::tr("Ecualizador"),
+        QStringLiteral("dockEqualizer"), m_equalizer, m_dockHost);
 
-    // --- ecualizador (oculto por defecto) ---------------------------------
-    m_equalizer = new EqualizerPanel(&m_engine->equalizer(), m_engine, rightSide);
-    m_equalizer->hide();
-    rightLayout->addWidget(m_equalizer);
+    m_video = new VideoPanel(m_engine, panels);
+    m_video->setMask(Settings::videoMask());
+    m_docks[DockVideo] = new PanelDock(Lang::tr("Video"),
+        QStringLiteral("dockVideo"), m_video, m_dockHost);
 
-    m_bodySplitter->addWidget(rightSide);
-    m_bodySplitter->setStretchFactor(0, 0);
-    m_bodySplitter->setStretchFactor(1, 1);
-    m_bodySplitter->setSizes({Theme::Metrics::LeftPanelWidth, 1200});
+    m_videoFilters = new VideoFilterPanel(panels);
+    m_videoFilters->setCurrentMask(Settings::videoMask());
+    m_docks[DockVideoFilters] = new PanelDock(Lang::tr("Filtros de video"),
+        QStringLiteral("dockVideoFilters"), m_videoFilters, m_dockHost);
 
-    root->addWidget(body, 1);
+    // Todos tienen que estar dentro antes de restaurar una disposicion: la
+    // que se guardo solo recoloca paneles que ya estan en la ventana.
+    for (PanelDock* dock : m_docks)
+        m_dockHost->addDockWidget(Qt::LeftDockWidgetArea, dock);
+    m_docks[DockVideo]->hide();   // solo cuando hay imagen
+    m_docks[DockVideoFilters]->hide();
+
+    root->addWidget(m_dockHost, 1);
 
     // --- barra inferior ----------------------------------------------------
     m_playerBar = new PlayerBar(central);
@@ -389,12 +571,7 @@ void MainWindow::wireSignals()
     connect(m_playerBar, &PlayerBar::previousClicked,  this, &MainWindow::playPrevious);
     connect(m_playerBar, &PlayerBar::repeatCycled,     this, &MainWindow::cycleRepeatMode);
 
-    connect(m_playerBar, &PlayerBar::shuffleToggled, this, [this](bool enabled) {
-        m_shuffle = enabled;
-        Settings::setShuffle(enabled);
-        if (enabled && m_playlists->currentPlaylist())
-            m_playlists->currentPlaylist()->reshuffle();
-    });
+    connect(m_playerBar, &PlayerBar::shuffleToggled, this, &MainWindow::setShuffleEnabled);
 
     connect(m_playerBar, &PlayerBar::volumeChanged, this, [this](float value) {
         m_engine->setVolume(value);
@@ -403,12 +580,7 @@ void MainWindow::wireSignals()
         Settings::setVolume(value);
     });
 
-    connect(m_playerBar, &PlayerBar::muteToggled, this, [this]() {
-        const bool muted = !m_engine->isMuted();
-        m_engine->setMuted(muted);
-        m_playerBar->setMuted(muted);
-        Settings::setMuted(muted);
-    });
+    connect(m_playerBar, &PlayerBar::muteToggled, this, &MainWindow::toggleMute);
 
     connect(m_playerBar, &PlayerBar::equalizerPanelToggled,
             this, &MainWindow::toggleEqualizerPanel);
@@ -418,106 +590,330 @@ void MainWindow::wireSignals()
         seek->setShowRemaining(!seek->showsRemaining());
     });
 
-    connect(m_playerBar, &PlayerBar::abLoopClicked, this, [this]() {
-        // Primer clic marca A, el segundo marca B, el tercero limpia.
-        if (m_loopStartMs < 0) {
-            m_loopStartMs = m_engine->positionMs();
-            m_playerBar->setAbLoopActive(true);
-        } else if (m_loopEndMs < 0) {
-            m_loopEndMs = m_engine->positionMs();
-            if (m_loopEndMs <= m_loopStartMs)
-                std::swap(m_loopStartMs, m_loopEndMs);
-        } else {
-            m_loopStartMs = m_loopEndMs = -1;
-            m_playerBar->setAbLoopActive(false);
-        }
-    });
+    connect(m_playerBar, &PlayerBar::abLoopClicked, this, &MainWindow::stepAbLoop);
 
     connect(m_playerBar->seekBar(), &SeekBar::seekRequested, this, [this](qint64 ms) {
         m_engine->seekMs(ms);
     });
 
     // --- ecualizador -------------------------------------------------------
-    connect(m_equalizer, &EqualizerPanel::closeRequested, this, [this]() {
-        m_playerBar->setEqualizerPanelOpen(false);
-        toggleEqualizerPanel(false);
-    });
     connect(m_equalizer, &EqualizerPanel::enabledChanged, this, [this](bool enabled) {
         m_playerBar->setEqualizerActive(enabled);
     });
 
+    // El panel del ecualizador ahora se abre y se cierra tambien desde su
+    // barra de titulo, el menu o una disposicion: el boton de la barra
+    // inferior sigue lo que haga el panel, venga de donde venga.
+    PanelDock* eqDock = m_docks[DockEqualizer];
+    connect(eqDock->toggleViewAction(), &QAction::toggled, this, [this](bool open) {
+        m_playerBar->setEqualizerPanelOpen(open);
+    });
+    // El plot solo consume FFT mientras se ve: en pestanas puede estar
+    // abierto pero tapado por otro panel.
+    connect(eqDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        m_equalizer->setAnalyzerActive(visible && audioIsFlowing());
+    });
+
     // --- motor -------------------------------------------------------------
     connect(m_engine, &AudioEngine::stateChanged, this, &MainWindow::onEngineStateChanged);
+
+    // Lo que abre FFmpeg dice su duracion un poco despues de abrirlo.
+    connect(m_engine, &AudioEngine::durationChanged, this, [this](qint64 ms) {
+        m_playerBar->seekBar()->setDurationMs(ms);
+    });
+    connect(m_engine, &AudioEngine::mediaError, this, [this](const QString& message) {
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"), message);
+    });
+
+    // Al pasar de un video a otro, FFmpeg dice "sin imagen" y enseguida "con
+    // imagen". Se espera un momento antes de cambiar de disposicion, para no
+    // saltar a la de audio y volver.
+    m_videoModeTimer = new QTimer(this);
+    m_videoModeTimer->setSingleShot(true);
+    m_videoModeTimer->setInterval(400);
+    connect(m_videoModeTimer, &QTimer::timeout, this, &MainWindow::onVideoActiveChanged);
+    connect(m_engine, &AudioEngine::videoActiveChanged, m_videoModeTimer,
+            qOverload<>(&QTimer::start));
+
+    connect(m_video, &VideoPanel::menuRequested, this, &MainWindow::showVideoMenu);
+    connect(m_video, &VideoPanel::filtersRequested, this, [this]() {
+        setVideoFiltersVisible(m_docks[DockVideoFilters]->isHidden());
+    });
+    connect(m_video, &VideoPanel::nextMaskRequested, this, [this]() {
+        runCommand(Commands::NextVideoMask);
+    });
+    applyVideoGestureSettings();
+    connect(m_video, &VideoPanel::volumeRequested, this, &MainWindow::setVolumeTo);
+
+    // Paleta de filtros: miniaturas del fotograma en curso mientras se ve, y
+    // un clic en una aplica esa mascara.
+    connect(m_video, &VideoPanel::thumbnailSourceChanged,
+            m_videoFilters, &VideoFilterPanel::setSource);
+    connect(m_docks[DockVideoFilters], &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        m_video->setThumbnailsWanted(visible);
+    });
+    connect(m_videoFilters, &VideoFilterPanel::maskSelected, this, &MainWindow::setVideoMask);
+    // Cerrarla con su boton es decir "no me la vuelvas a sacar".
+    connect(m_docks[DockVideoFilters], &PanelDock::userClosed, this, [this]() {
+        Settings::setVideoFiltersVisible(false);
+    });
+
+    // Los subtitulos de archivo son de un video concreto: al abrir otro se
+    // quitan, y si junto al nuevo hay unos con su mismo nombre, se cargan.
+    connect(m_engine, &AudioEngine::trackOpened, this, [this](const QString& path, qint64) {
+        m_video->clearSubtitles();
+        m_videoFilters->resetSource();
+        // Las previsualizaciones salen del mismo archivo.
+        m_video->setPreviewSource(TrackInfo::isVideo(path) ? path : QString());
+        if (TrackInfo::isVideo(path))
+            loadSidecarSubtitles(path);
+    });
+    connect(m_video, &VideoPanel::fullscreenRequested, this, &MainWindow::toggleVideoFullscreen);
 }
 
 void MainWindow::installShortcuts()
 {
-    const auto bind = [this](const QKeySequence& keys, auto slot) {
-        auto* shortcut = new QShortcut(keys, this);
+    // Un atajo por orden, todos configurables desde Configuracion. Valen en
+    // cualquier ventana del programa, paneles flotantes incluidos.
+    for (int command = 0; command < Commands::Count; ++command) {
+        auto* shortcut = new QShortcut(this);
         shortcut->setContext(Qt::ApplicationShortcut);
-        connect(shortcut, &QShortcut::activated, this, slot);
-    };
+        connect(shortcut, &QShortcut::activated, this, [this, command]() { runCommand(command); });
+        m_shortcuts[command] = shortcut;
+    }
+    applyShortcuts();
+}
 
-    bind(QKeySequence(Qt::Key_Space),                  &MainWindow::togglePlayPause);
-    bind(QKeySequence(Qt::CTRL | Qt::Key_Right),       &MainWindow::playNext);
-    bind(QKeySequence(Qt::CTRL | Qt::Key_Left),        &MainWindow::playPrevious);
-    bind(QKeySequence(Qt::CTRL | Qt::Key_O),           &MainWindow::openFilesDialog);
-    bind(QKeySequence(Qt::CTRL | Qt::Key_K), [this]() { m_library->openFolderDialog(); });
-    bind(QKeySequence(Qt::Key_F4), &MainWindow::openTagEditorForCurrent);
-    bind(QKeySequence(Qt::CTRL | Qt::Key_E), [this]() {
-        const bool open = !m_equalizer->isVisible();
-        m_playerBar->setEqualizerPanelOpen(open);
-        toggleEqualizerPanel(open);
-    });
-    bind(QKeySequence(Qt::CTRL | Qt::Key_Up), [this]() {
-        const float value = qMin(1.0f, m_engine->volume() + 0.05f);
-        m_engine->setVolume(value);
-        m_playerBar->setVolume(value);
-        Settings::setVolume(value);
-    });
-    bind(QKeySequence(Qt::CTRL | Qt::Key_Down), [this]() {
-        const float value = qMax(0.0f, m_engine->volume() - 0.05f);
-        m_engine->setVolume(value);
-        m_playerBar->setVolume(value);
-        Settings::setVolume(value);
-    });
+void MainWindow::applyShortcuts()
+{
+    for (int command = 0; command < Commands::Count; ++command)
+        m_shortcuts[command]->setKey(Commands::keys(command));
+}
+
+void MainWindow::runCommand(int command)
+{
+    switch (command) {
+    case Commands::PlayPause:      togglePlayPause(); break;
+    case Commands::Stop:           stopPlayback(); break;
+    case Commands::Next:           playNext(); break;
+    case Commands::Previous:       playPrevious(); break;
+    case Commands::SeekForward:    seekBy(Settings::seekStepMs()); break;
+    case Commands::SeekBackward:   seekBy(-Settings::seekStepMs()); break;
+    case Commands::VolumeUp:       stepVolume(Settings::volumeStepPercent() / 100.0f); break;
+    case Commands::VolumeDown:     stepVolume(-Settings::volumeStepPercent() / 100.0f); break;
+    case Commands::Mute:           toggleMute(); break;
+    case Commands::Shuffle: {
+        const bool on = !m_shuffle;
+        m_playerBar->setShuffle(on);
+        setShuffleEnabled(on);
+        break;
+    }
+    case Commands::Repeat:         cycleRepeatMode(); break;
+    case Commands::AbLoop:         stepAbLoop(); break;
+
+    case Commands::OpenFiles:      openFilesDialog(); break;
+    case Commands::OpenFolder:     m_library->openFolderDialog(); break;
+    case Commands::EditTags:       openTagEditorForCurrent(); break;
+
+    case Commands::EqualizerPanel: toggleEqualizerPanel(m_docks[DockEqualizer]->isHidden()); break;
+    case Commands::EqualizerOnOff: m_equalizer->setEqualizerEnabled(!Settings::eqEnabled()); break;
+
+    case Commands::PanelNowPlaying: togglePanel(DockNowPlaying); break;
+    case Commands::PanelFiles:      togglePanel(DockFiles); break;
+    case Commands::PanelPlaylist:   togglePanel(DockPlaylist); break;
+    case Commands::ShowAllPanels:   setAllPanelsVisible(true); break;
+    case Commands::HideAllPanels:   setAllPanelsVisible(false); break;
+
+    case Commands::NextLayout:      cycleLayout(1); break;
+    case Commands::PreviousLayout:  cycleLayout(-1); break;
+    case Commands::LayoutClassic:   applyLayoutPreset(LayoutClassic); break;
+    case Commands::LayoutLibrary:   applyLayoutPreset(LayoutLibrary); break;
+    case Commands::LayoutListening: applyLayoutPreset(LayoutListening); break;
+    case Commands::LayoutStudio:    applyLayoutPreset(LayoutStudio); break;
+    case Commands::SaveLayout:      saveCurrentLayout(); break;
+
+    case Commands::ChooseBackground:  chooseBackgroundImage(); break;
+    case Commands::ClearBackground:   clearBackgroundImage(); break;
+    case Commands::NextVisualization: cycleVisualization(); break;
+
+    case Commands::VideoCinema:        applyVideoLayout(VideoCinema); break;
+    case Commands::VideoWithPlaylist:  applyVideoLayout(VideoWithPlaylist); break;
+    case Commands::VideoWithEqualizer: applyVideoLayout(VideoWithEqualizer); break;
+    case Commands::VideoStudio:        applyVideoLayout(VideoStudio); break;
+    case Commands::NextVideoMask:
+        setVideoMask((m_video->mask() + 1) % VideoMasks::Count);
+        showCommandToast(Lang::tr("Mascara: %1").arg(VideoMasks::name(m_video->mask())));
+        break;
+    case Commands::VideoFullscreen:    toggleVideoFullscreen(); break;
+    case Commands::AddAudioTrack:      addAudioTrackDialog(); break;
+    case Commands::AddSubtitles:       addSubtitlesDialog(); break;
+    case Commands::VideoFilters:
+        setVideoFiltersVisible(m_docks[DockVideoFilters]->isHidden());
+        break;
+
+    case Commands::OpenSettings:   openSettings(); break;
+    case Commands::ToggleMaximize: toggleMaximized(); break;
+    case Commands::MinimizeWindow: showMinimized(); break;
+    case Commands::Quit:           close(); break;
+    default: break;
+    }
+}
+
+void MainWindow::setShuffleEnabled(bool enabled)
+{
+    m_shuffle = enabled;
+    Settings::setShuffle(enabled);
+    if (enabled && m_playlists->currentPlaylist())
+        m_playlists->currentPlaylist()->reshuffle();
+}
+
+void MainWindow::toggleMute()
+{
+    const bool muted = !m_engine->isMuted();
+    m_engine->setMuted(muted);
+    m_playerBar->setMuted(muted);
+    Settings::setMuted(muted);
+}
+
+void MainWindow::stepVolume(float delta)
+{
+    setVolumeTo(m_engine->volume() + delta);
+    // Con video a la vista, la barra de volumen tambien en la imagen.
+    if (m_engine->hasVideo())
+        m_video->showVolumeOsd(m_engine->volume());
+}
+
+void MainWindow::setVolumeTo(float volume)
+{
+    const float value = qBound(0.0f, volume, 1.0f);
+    m_engine->setVolume(value);
+    m_playerBar->setVolume(value);
+    Settings::setVolume(value);
+}
+
+void MainWindow::seekBy(qint64 deltaMs)
+{
+    const qint64 duration = m_engine->durationMs();
+    if (duration <= 0)
+        return;
+    const qint64 target = std::clamp<qint64>(m_engine->positionMs() + deltaMs, 0, duration - 1);
+    m_engine->seekMs(target);
+    if (m_engine->hasVideo())
+        m_video->showSeekOsd(deltaMs, target);
+}
+
+void MainWindow::applyVideoGestureSettings()
+{
+    m_video->setScrubFramesPer100(Settings::videoScrubFramesPer100());
+    m_video->setSeekStepMs(Settings::seekStepMs());
+    m_video->setGestures(Settings::videoGestureSeek(), Settings::videoGestureVolume(),
+                         Settings::videoGestureWheel());
+    m_video->setPreviewWidth(Settings::videoPreviewWidth());
+    const QString color = Settings::volumeBarColor();
+    m_video->setVolumeBarStyle(Settings::volumeBarShape(),
+                               color.isEmpty() ? QColor() : QColor(color));
+}
+
+void MainWindow::fillStepMenus(QMenu* menu)
+{
+    // Cuanto mueve cada pulsacion de una flecha (y cada paso de la rueda
+    // sobre el video). Mantener la flecha pulsada repite.
+    QMenu* seek = menu->addMenu(Lang::tr("Paso al avanzar o retroceder"));
+    seek->setFont(Theme::uiFont(9));
+    auto* seekGroup = new QActionGroup(seek);
+    const int seekStep = Settings::seekStepMs();
+    for (int seconds : {1, 2, 5, 10, 15, 30, 60}) {
+        QAction* action = seek->addAction(Lang::tr("%1 s").arg(seconds));
+        action->setCheckable(true);
+        action->setChecked(seconds * 1000 == seekStep);
+        seekGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, seconds]() {
+            Settings::setSeekStepMs(seconds * 1000);
+            m_video->setSeekStepMs(seconds * 1000);
+        });
+    }
+
+    QMenu* volume = menu->addMenu(Lang::tr("Paso de volumen"));
+    volume->setFont(Theme::uiFont(9));
+    auto* volumeGroup = new QActionGroup(volume);
+    const int volumeStep = Settings::volumeStepPercent();
+    for (int percent : {1, 2, 5, 10, 20}) {
+        QAction* action = volume->addAction(Lang::tr("%1 %").arg(percent));
+        action->setCheckable(true);
+        action->setChecked(percent == volumeStep);
+        volumeGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [percent]() {
+            Settings::setVolumeStepPercent(percent);
+        });
+    }
+}
+
+void MainWindow::stepAbLoop()
+{
+    // Primer clic marca A, el segundo marca B, el tercero limpia.
+    if (m_loopStartMs < 0) {
+        m_loopStartMs = m_engine->positionMs();
+        m_playerBar->setAbLoopActive(true);
+    } else if (m_loopEndMs < 0) {
+        m_loopEndMs = m_engine->positionMs();
+        if (m_loopEndMs <= m_loopStartMs)
+            std::swap(m_loopStartMs, m_loopEndMs);
+    } else {
+        m_loopStartMs = m_loopEndMs = -1;
+        m_playerBar->setAbLoopActive(false);
+    }
+}
+
+void MainWindow::cycleVisualization()
+{
+    // Ninguna -> la primera -> ... -> la ultima -> ninguna.
+    int next = m_background->visualization() + 1;
+    if (next >= Visualizations::count())
+        next = -1;
+    setBackgroundVisualization(next);
+    showCommandToast(next < 0 ? Lang::tr("Sin visualizacion")
+                              : Lang::tr(Visualizations::info(next).name));
+}
+
+void MainWindow::showCommandToast(const QString& text)
+{
+    // Aviso breve en el centro de la ventana: al cambiar algo con el teclado
+    // se ve que paso sin tener que abrir ningun menu.
+    QToolTip::showText(mapToGlobal(rect().center()), text, this, QRect(), 1500);
 }
 
 // ------------------------------------------------------------------- sesion
 
 void MainWindow::restoreSession()
 {
-    const QByteArray geometry = Settings::windowGeometry();
-    if (!geometry.isEmpty())
-        restoreGeometry(geometry);
-    else
-        resize(1600, 860);
+    // Primero lo guardado para estos monitores. Si es la primera vez con
+    // ellos, lo ultimo que se uso en cualquier otra combinacion, ajustado a
+    // lo que cabe.
+    m_screenKey = currentScreenKey();
+    if (!restoreWindowPlacement()) {
+        const QByteArray geometry = Settings::windowGeometry();
+        if (!geometry.isEmpty())
+            restoreGeometry(geometry);
+        else
+            resize(1600, 860);
 
-    clampIntoWorkArea();
+        clampIntoWorkArea();
+    }
 
     const QByteArray splitter = Settings::splitterState();
     if (!splitter.isEmpty())
         m_centerSplitter->restoreState(splitter);
 
-    // El orden de las columnas se restablece antes que los tamanos: guardarlos
-    // y devolverlos en distinto orden dejaria cada panel con el ancho del otro.
-    if (Settings::bodySwapped())
-        m_bodySplitter->insertWidget(0, m_bodySplitter->widget(1));
-    if (Settings::panelsSwapped())
-        m_panelsSplitter->insertWidget(0, m_panelsSplitter->widget(1));
-
-    const QByteArray bodyState = Settings::bodySplitterState();
-    if (!bodyState.isEmpty())
-        m_bodySplitter->restoreState(bodyState);
-
-    const QByteArray panelsState = Settings::panelsSplitterState();
-    if (!panelsState.isEmpty())
-        m_panelsSplitter->restoreState(panelsState);
-
-    for (int panel = 0; panel < PanelCount; ++panel) {
-        if (QWidget* widget = panelWidget(panel))
-            widget->setVisible(Settings::panelVisible(QString::fromLatin1(panelKey(panel))));
-    }
+    // Disposicion de los paneles tal como se dejo. La primera vez, o si la
+    // guardada es de una version que ya no encaja, la clasica. En diferido:
+    // los tamanos de una disposicion solo se pueden repartir con la ventana
+    // ya a su tamano final.
+    if (!m_dockHost->restoreState(Settings::dockState(), kDockStateVersion))
+        QTimer::singleShot(0, this, [this]() { applyLayoutPreset(LayoutClassic); });
+    // Una disposicion guardada antes de que hubiera video no lo menciona y lo
+    // dejaria a la vista: al arrancar no hay ninguno.
+    m_docks[DockVideo]->hide();
+    m_docks[DockVideoFilters]->hide();
 
     const float volume = Settings::volume();
     m_engine->setVolume(volume);
@@ -530,11 +926,14 @@ void MainWindow::restoreSession()
     m_shuffle = Settings::shuffle();
     m_playerBar->setShuffle(m_shuffle);
 
-    // Si la captura del sistema quedo encendida, se vuelve a levantar. Si el
-    // dispositivo ya no esta, start() falla y se queda apagada sin molestar.
+    // Si la captura del sistema quedo encendida, se vuelve a levantar. Si la
+    // interfaz de la ultima vez no esta pero otra conocida si, se arranca con
+    // esa; si no hay ninguna, se espera a que se conecte.
+    m_presentOutputs = connectedOutputIds();
     if (Settings::systemAudioEnabled()) {
+        const QByteArray other = chooseInterface(m_presentOutputs, m_presentOutputs);
         applySystemAudio(true, Settings::systemAudioSource(),
-                         Settings::systemAudioOutput());
+                         other.isEmpty() ? Settings::systemAudioOutput() : other);
     }
 
     m_repeat = static_cast<PlaylistModel::RepeatMode>(qBound(0, Settings::repeatMode(), 2));
@@ -542,9 +941,7 @@ void MainWindow::restoreSession()
 
     m_playerBar->setEqualizerActive(Settings::eqEnabled());
 
-    const bool eqVisible = Settings::eqPanelVisible();
-    m_playerBar->setEqualizerPanelOpen(eqVisible);
-    toggleEqualizerPanel(eqVisible);
+    m_playerBar->setEqualizerPanelOpen(!m_docks[DockEqualizer]->isHidden());
 
     m_library->setOpenedFolders(Settings::libraryFolders());
 
@@ -569,10 +966,12 @@ void MainWindow::restoreSession()
 void MainWindow::saveSession()
 {
     Settings::setWindowGeometry(saveGeometry());
+    saveWindowPlacement();
     Settings::setSplitterState(m_centerSplitter->saveState());
-    Settings::setBodySplitterState(m_bodySplitter->saveState());
-    Settings::setPanelsSplitterState(m_panelsSplitter->saveState());
-    Settings::setEqPanelVisible(m_equalizer->isVisible());
+    // Con un video abierto se guarda la disposicion de audio de la que se
+    // vino: al arrancar no habra video.
+    Settings::setDockState(m_inVideoMode ? m_audioLayoutState
+                                         : m_dockHost->saveState(kDockStateVersion));
     Settings::setRepeatMode(int(m_repeat));
     Settings::setShuffle(m_shuffle);
     Settings::setPlaylists(m_playlists->serialize());
@@ -583,6 +982,8 @@ void MainWindow::saveSession()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    if (m_videoFullscreen)
+        toggleVideoFullscreen();   // que se guarde la ventana normal
     saveSession();
     m_tick->stop();
     m_engine->stop();
@@ -1364,6 +1765,11 @@ void MainWindow::openSettings()
         connect(m_settings, &SettingsDialog::themeChanged, this, &MainWindow::applyTheme);
         connect(m_settings, &SettingsDialog::systemAudioChanged,
                 this, &MainWindow::applySystemAudio);
+        connect(m_settings, &SettingsDialog::shortcutsChanged,
+                this, &MainWindow::applyShortcuts);
+        connect(m_settings, &SettingsDialog::subtitleStyleChanged, this, [this]() {
+            m_video->setSubtitleStyle(SubtitleStyle::load());
+        });
         connect(m_settings, &SettingsDialog::visualizationChanged,
                 this, &MainWindow::setBackgroundVisualization);
         connect(m_settings, &SettingsDialog::imageOpacityChanged,
@@ -1419,8 +1825,22 @@ void MainWindow::applyTheme(const QString& paletteId)
 void MainWindow::applySystemAudio(bool enabled, const QByteArray& source,
                                   const QByteArray& output)
 {
+    // Cambiar de interfaz es cambiar tambien de ecualizacion: lo de la que se
+    // deja se guarda en su perfil y se carga el de la que llega. Si la nueva
+    // todavia no tiene, se queda con lo que hay y lo hara suyo al irse.
+    const QByteArray previous = Settings::systemAudioOutput();
+    if (!output.isEmpty() && output != previous) {
+        Settings::saveOutputProfile(previous);
+        if (Settings::loadOutputProfile(output))
+            m_equalizer->loadFromSettings();
+    }
+
     Settings::setSystemAudioSource(source);
     Settings::setSystemAudioOutput(output);
+    if (enabled)
+        Settings::touchKnownOutput(output);
+    if (m_settings)
+        m_settings->refreshInterfaces();
 
     if (!m_systemAudio) {
         m_systemAudio = new SystemAudioTap(this);
@@ -1429,27 +1849,152 @@ void MainWindow::applySystemAudio(bool enabled, const QByteArray& source,
         m_systemAudio->setVisualSink(m_engine);
     }
 
+    // Una orden nueva manda sobre los reintentos que quedaran pendientes.
+    if (m_systemAudioRetry)
+        m_systemAudioRetry->stop();
+    m_systemAudioTries = 0;
+
     if (!enabled) {
         m_systemAudio->stop();
+        m_engine->setChainBypassed(false);
         Settings::setSystemAudioEnabled(false);
         if (m_settings)
             m_settings->setSystemAudioStatus(Lang::tr("Captura del sistema apagada."), true);
         return;
     }
 
+    startSystemAudio();
+}
+
+void MainWindow::startSystemAudio()
+{
+    // Nada mas encender el PC, Windows a veces no deja abrir la captura aunque
+    // el cable este bien; al rato si. Antes habia que reiniciar el programa o
+    // tocar la salida de Windows para que arrancara. Ahora se reintenta solo
+    // durante un minuto; despues se espera a que se conecte algun dispositivo.
+    constexpr int kMaxTries   = 20;
+    constexpr int kIntervalMs = 3000;
+
     QString error;
-    if (!m_systemAudio->start(source, output, &error)) {
+    const bool started = m_systemAudio->start(Settings::systemAudioSource(),
+                                              Settings::systemAudioOutput(), &error);
+
+    // La musica del propio reproductor sale por la salida que se captura: si
+    // la captura funciona, la ecualiza ella y aqui no se toca.
+    m_engine->setChainBypassed(started);
+
+    if (!started) {
+        if (m_systemAudio->lastErrorRetryable() && m_systemAudioTries >= kMaxTries) {
+            // Ya no se insiste con el reloj: lo normal es que la interfaz
+            // este desenchufada. Se queda encendida y se reintenta en cuanto
+            // Windows avise de que se conecto algo (onAudioDevicesChanged).
+            Settings::setSystemAudioEnabled(true);
+            if (m_settings) {
+                m_settings->setSystemAudioStatus(
+                    Lang::tr("%1 Se volvera a intentar al conectar un dispositivo de audio.")
+                        .arg(error), true);
+            }
+            return;
+        }
+
+        if (m_systemAudio->lastErrorRetryable()) {
+            ++m_systemAudioTries;
+            if (!m_systemAudioRetry) {
+                m_systemAudioRetry = new QTimer(this);
+                m_systemAudioRetry->setSingleShot(true);
+                m_systemAudioRetry->setInterval(kIntervalMs);
+                connect(m_systemAudioRetry, &QTimer::timeout,
+                        this, &MainWindow::startSystemAudio);
+            }
+            m_systemAudioRetry->start();
+
+            // Sigue encendida mientras tanto: si se cierra el programa a
+            // medias, la proxima vez lo vuelve a intentar.
+            Settings::setSystemAudioEnabled(true);
+            if (m_settings) {
+                m_settings->setSystemAudioStatus(
+                    Lang::tr("%1 Reintentando en unos segundos...").arg(error), true);
+            }
+            return;
+        }
+
+        m_systemAudioTries = 0;
         Settings::setSystemAudioEnabled(false);
         if (m_settings)
             m_settings->setSystemAudioStatus(error, false);
         return;
     }
 
+    m_systemAudioTries = 0;
     Settings::setSystemAudioEnabled(true);
     if (m_settings) {
         m_settings->setSystemAudioStatus(
             Lang::tr("Procesando el audio del sistema."), true);
     }
+}
+
+void MainWindow::onAudioDevicesChanged()
+{
+    const QList<QByteArray> before = m_presentOutputs;
+    m_presentOutputs = connectedOutputIds();
+
+    // Con la captura encendida se sigue a las interfaces: la que se acaba de
+    // conectar se lleva el sonido y, si se va la que se usaba, pasa a otra.
+    if (Settings::systemAudioEnabled()) {
+        const QByteArray target = chooseInterface(m_presentOutputs, before);
+        if (!target.isEmpty())
+            applySystemAudio(true, Settings::systemAudioSource(), target);
+    }
+
+    if (m_settings)
+        m_settings->refreshSystemDevices();
+
+    // Captura encendida pero parada: o esperaba a una interfaz que quiza
+    // acaba de llegar, o se le acaba de ir la suya. En los dos casos se
+    // vuelve a intentar desde cero.
+    if (m_systemAudio && Settings::systemAudioEnabled() && !m_systemAudio->isRunning()) {
+        if (m_systemAudioRetry)
+            m_systemAudioRetry->stop();
+        m_systemAudioTries = 0;
+        startSystemAudio();
+    }
+}
+
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
+{
+#ifdef Q_OS_WIN
+    const auto* msg = static_cast<const MSG*>(message);
+
+    // Arrastre o cambio de tamano hecho por Windows (startSystemMove y
+    // startSystemResize). Al soltar se comprueba que la barra de titulo no
+    // haya quedado debajo de una barra de tareas puesta arriba.
+    if (msg->message == WM_ENTERSIZEMOVE) {
+        m_sizeMoveStart = frameGeometry().size();
+    } else if (msg->message == WM_EXITSIZEMOVE) {
+        const bool resized = frameGeometry().size() != m_sizeMoveStart;
+        // Arrastrar una ventana maximizada a mano la saca del maximizado.
+        if (m_manualMaximized && geometry() != workArea()) {
+            m_manualMaximized = false;
+            m_titleBar->setMaximized(isWindowMaximized());
+        }
+        keepTitleBarReachable(resized);
+    }
+
+    if (msg->message == WM_DEVICECHANGE && msg->wParam == DBT_DEVNODES_CHANGED) {
+        // Llegan varios avisos seguidos por cada aparato, y Windows tarda un
+        // poco mas en dar de alta sus salidas de audio: se espera a que se
+        // calme antes de mirar.
+        if (!m_deviceChange) {
+            m_deviceChange = new QTimer(this);
+            m_deviceChange->setSingleShot(true);
+            m_deviceChange->setInterval(1500);
+            connect(m_deviceChange, &QTimer::timeout,
+                    this, &MainWindow::onAudioDevicesChanged);
+        }
+        m_deviceChange->start();
+    }
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 void MainWindow::restartForLanguage()
@@ -1476,78 +2021,159 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
     menu.setFont(Theme::uiFont(9));
     const QColor iconColor = Theme::TextDim;
 
-    menu.addAction(Icons::icon(Icons::Plus, iconColor),
-                   Lang::tr("Abrir archivos..."),
-                   QKeySequence(Qt::CTRL | Qt::Key_O),
-                   this, &MainWindow::openFilesDialog);
+    // Cada opcion muestra a la derecha su atajo vigente, el que se haya
+    // elegido en Configuracion. Va como texto tras un tabulador y no como
+    // atajo del QAction: si no, con el menu abierto la tecla se dispararia
+    // dos veces (aqui y en el atajo global).
+    const auto withKeys = [](const QString& text, int command) {
+        const QString keys = Commands::keysText(command);
+        return keys.isEmpty() ? text : text + QLatin1Char('	') + keys;
+    };
+    const auto addCommand = [this, &withKeys](QMenu* target, int command,
+                                              const QIcon& icon = QIcon(),
+                                              const QString& text = QString()) {
+        const QString label = text.isEmpty() ? Lang::tr(Commands::info(command).label) : text;
+        QAction* action = target->addAction(icon, withKeys(label, command));
+        connect(action, &QAction::triggered, this, [this, command]() { runCommand(command); });
+        return action;
+    };
+    const auto addSubmenu = [&](QMenu* parent, Icons::Icon icon, const QString& title) {
+        QMenu* sub = icon == Icons::None ? parent->addMenu(title)
+                                         : parent->addMenu(Icons::icon(icon, iconColor), title);
+        sub->setFont(Theme::uiFont(9));
+        return sub;
+    };
 
-    menu.addAction(Icons::icon(Icons::FolderOpen, iconColor),
-                   Lang::tr("Abrir carpeta..."),
-                   QKeySequence(Qt::CTRL | Qt::Key_K),
-                   m_library, &LibraryPanel::openFolderDialog);
+    addCommand(&menu, Commands::OpenFiles, Icons::icon(Icons::Plus, iconColor));
+    addCommand(&menu, Commands::OpenFolder, Icons::icon(Icons::FolderOpen, iconColor));
 
     menu.addSeparator();
 
-    QAction* eqAction = menu.addAction(Icons::icon(Icons::Equalizer, iconColor),
-                                       Lang::tr("Ecualizador y efectos"));
+    QAction* eqAction = addCommand(&menu, Commands::EqualizerPanel,
+                                   Icons::icon(Icons::Equalizer, iconColor));
     eqAction->setCheckable(true);
-    eqAction->setChecked(m_equalizer->isVisible());
-    eqAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
-    connect(eqAction, &QAction::toggled, this, [this](bool open) {
-        m_playerBar->setEqualizerPanelOpen(open);
-        toggleEqualizerPanel(open);
-    });
+    eqAction->setChecked(!m_docks[DockEqualizer]->isHidden());
+
+    QAction* eqOnAction = addCommand(&menu, Commands::EqualizerOnOff);
+    eqOnAction->setCheckable(true);
+    eqOnAction->setChecked(Settings::eqEnabled());
+
+    // --- submenu de reproduccion -------------------------------------------
+    QMenu* playback = addSubmenu(&menu, Icons::Play, Lang::tr("Reproduccion"));
+    addCommand(playback, Commands::PlayPause);
+    addCommand(playback, Commands::Stop);
+    addCommand(playback, Commands::Next);
+    addCommand(playback, Commands::Previous);
+    playback->addSeparator();
+    addCommand(playback, Commands::VolumeUp);
+    addCommand(playback, Commands::VolumeDown);
+    QAction* muteAction = addCommand(playback, Commands::Mute);
+    muteAction->setCheckable(true);
+    muteAction->setChecked(m_engine->isMuted());
+    playback->addSeparator();
+    QAction* shuffleAction = addCommand(playback, Commands::Shuffle);
+    shuffleAction->setCheckable(true);
+    shuffleAction->setChecked(m_shuffle);
+    addCommand(playback, Commands::Repeat);
+    addCommand(playback, Commands::AbLoop);
+    playback->addSeparator();
+    addCommand(playback, Commands::SeekForward);
+    addCommand(playback, Commands::SeekBackward);
+    fillStepMenus(playback);
 
     menu.addSeparator();
 
     // --- submenu de paneles ------------------------------------------------
-    QMenu* panels = menu.addMenu(Icons::icon(Icons::Grip, iconColor),
-                                 Lang::tr("Paneles"));
-    panels->setFont(Theme::uiFont(9));
+    QMenu* panels = addSubmenu(&menu, Icons::Grip, Lang::tr("Paneles"));
 
-    const struct { int panel; const char* label; } kPanels[] = {
-        {PanelNowPlaying, "Reproduciendo"},
-        {PanelFiles,      "Archivos"},
-        {PanelPlaylist,   "Lista de reproduccion"},
+    const struct { int dock; int command; } kPanelCommands[] = {
+        {DockNowPlaying, Commands::PanelNowPlaying},
+        {DockFiles,      Commands::PanelFiles},
+        {DockPlaylist,   Commands::PanelPlaylist},
+        {DockEqualizer,  Commands::EqualizerPanel},
     };
-
-    for (const auto& entry : kPanels) {
-        QWidget* widget = panelWidget(entry.panel);
-        QAction* action = panels->addAction(Lang::tr(entry.label));
+    for (const auto& entry : kPanelCommands) {
+        PanelDock* dock = m_docks[entry.dock];
+        QAction* action = addCommand(panels, entry.command, QIcon(), dock->windowTitle());
         action->setCheckable(true);
-        action->setChecked(widget && widget->isVisible());
-        const int panel = entry.panel;
-        connect(action, &QAction::toggled, this, [this, panel](bool on) {
-            setPanelVisible(panel, on);
-        });
+        action->setChecked(!dock->isHidden());
     }
 
+    QAction* filtersAction = addCommand(panels, Commands::VideoFilters, QIcon(),
+                                        m_docks[DockVideoFilters]->windowTitle());
+    filtersAction->setCheckable(true);
+    filtersAction->setChecked(!m_docks[DockVideoFilters]->isHidden());
+
+    // El de video no tiene atajo propio: lo trae solo abrir un video.
+    PanelDock* videoDock = m_docks[DockVideo];
+    QAction* videoAction = panels->addAction(videoDock->windowTitle());
+    videoAction->setCheckable(true);
+    videoAction->setChecked(!videoDock->isHidden());
+    connect(videoAction, &QAction::toggled, this, [this](bool on) {
+        if (m_docks[DockVideo]->isHidden() == on)
+            togglePanel(DockVideo);
+    });
+
     panels->addSeparator();
-    panels->addAction(Lang::tr("Intercambiar reproduciendo y el resto"),
-                      this, &MainWindow::swapBodyColumns);
-    panels->addAction(Lang::tr("Intercambiar archivos y lista"),
-                      this, &MainWindow::swapPanelColumns);
-    panels->addSeparator();
-    panels->addAction(Icons::icon(Icons::Revert, iconColor),
-                      Lang::tr("Restablecer la disposicion"),
-                      this, &MainWindow::resetPanelLayout);
+    addCommand(panels, Commands::ShowAllPanels);
+    addCommand(panels, Commands::HideAllPanels);
+
+    // --- submenu de disposiciones ------------------------------------------
+    QMenu* layouts = addSubmenu(&menu, Icons::Grip, Lang::tr("Disposicion de paneles"));
+    addCommand(layouts, Commands::NextLayout);
+    addCommand(layouts, Commands::PreviousLayout);
+    layouts->addSeparator();
+
+    // Puntos de partida: cada usuario elige el que mas se le parece y lo
+    // ajusta a su gusto.
+    const int kPresetCommands[LayoutPresetCount] = {
+        Commands::LayoutClassic, Commands::LayoutLibrary,
+        Commands::LayoutListening, Commands::LayoutStudio,
+    };
+    for (int preset = 0; preset < LayoutPresetCount; ++preset)
+        addCommand(layouts, kPresetCommands[preset], QIcon(), layoutPresetName(preset));
+
+    const QList<Settings::SavedLayout> saved = Settings::savedLayouts();
+    if (!saved.isEmpty()) {
+        layouts->addSeparator();
+        for (const Settings::SavedLayout& layout : saved) {
+            const QString name = layout.name;
+            layouts->addAction(name, this, [this, name]() { applySavedLayout(name); });
+        }
+    }
+
+    layouts->addSeparator();
+    addCommand(layouts, Commands::SaveLayout, Icons::icon(Icons::Save, iconColor));
+
+    QMenu* removeMenu = addSubmenu(layouts, Icons::Trash,
+                                   Lang::tr("Eliminar una disposicion guardada"));
+    removeMenu->setEnabled(!saved.isEmpty());
+    for (const Settings::SavedLayout& layout : saved) {
+        const QString name = layout.name;
+        removeMenu->addAction(name, this, [name]() { Settings::removeLayout(name); });
+    }
 
     menu.addSeparator();
 
-    menu.addAction(Icons::icon(Icons::Settings, iconColor),
-                   Lang::tr("Configuracion..."),
-                   this, &MainWindow::openSettings);
+    // --- video: menu propio, aparte de las opciones de audio --------------
+    QMenu* videoMenu = addSubmenu(&menu, Icons::Image, Lang::tr("Video"));
+    fillVideoMenu(videoMenu);
 
-    // --- submenu de fondo --------------------------------------------------
+    menu.addSeparator();
+
+    addCommand(&menu, Commands::OpenSettings, Icons::icon(Icons::Settings, iconColor));
+    menu.addAction(Lang::tr("Atajos de teclado..."), this, [this]() {
+        openSettings();
+        m_settings->showShortcuts();
+    });
+
     QMenu* background = menu.addMenu(Icons::icon(Icons::Image, iconColor),
                                      QStringLiteral("Fondo"));
     background->setFont(Theme::uiFont(9));
 
-    background->addAction(Lang::tr("Elegir imagen..."),
-                          this, &MainWindow::chooseBackgroundImage);
-
-    QAction* clearAction = background->addAction(Lang::tr("Quitar imagen"),
-                                                 this, &MainWindow::clearBackgroundImage);
+    addCommand(background, Commands::ChooseBackground, QIcon(), Lang::tr("Elegir imagen..."));
+    QAction* clearAction = addCommand(background, Commands::ClearBackground, QIcon(),
+                                      Lang::tr("Quitar imagen"));
     clearAction->setEnabled(m_background->hasImage());
 
     background->addSeparator();
@@ -1569,6 +2195,8 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
         });
     };
 
+    addCommand(visualMenu, Commands::NextVisualization);
+    visualMenu->addSeparator();
     addVisual(-1, Lang::tr("Ninguna"));
     visualMenu->addSeparator();
     for (int i = 0; i < Visualizations::count(); ++i)
@@ -1658,8 +2286,13 @@ void MainWindow::showAppMenu(const QPoint& globalPos)
         menu.addSeparator();
     }
 
-    menu.addAction(Icons::icon(Icons::Close, iconColor),
-                   Lang::tr("Salir"), this, &MainWindow::close);
+    QMenu* windowMenu = addSubmenu(&menu, Icons::None, Lang::tr("Ventana"));
+    addCommand(windowMenu, Commands::ToggleMaximize);
+    addCommand(windowMenu, Commands::MinimizeWindow);
+
+    menu.addSeparator();
+
+    addCommand(&menu, Commands::Quit, Icons::icon(Icons::Close, iconColor));
 
     menu.exec(globalPos);
 }
@@ -1678,13 +2311,186 @@ void MainWindow::toggleMaximized()
     } else if (m_manualMaximized) {
         setGeometry(m_restoreGeometry);
         m_manualMaximized = false;
-    } else if (QScreen* target = screen()) {
+    } else if (screen()) {
         m_restoreGeometry = geometry();
-        setGeometry(target->availableGeometry());
+        setGeometry(workArea());
         m_manualMaximized = true;
     }
 
     m_titleBar->setMaximized(isWindowMaximized());
+}
+
+QRect MainWindow::workArea() const
+{
+    QScreen* target = screen();
+    if (!target)
+        return geometry();
+
+    QRect work = target->availableGeometry();
+
+#ifdef Q_OS_WIN
+    // Barra de tareas que se oculta sola: no reserva sitio, asi que el area
+    // util es el monitor entero. Pero una ventana que lo cubre entero cuenta
+    // para Windows como pantalla completa, y entonces la barra ya no asoma al
+    // llevar el raton al borde. Se deja libre una linea en ese borde.
+    if (work == target->geometry()) {
+        HMONITOR monitor = MonitorFromWindow(reinterpret_cast<HWND>(winId()),
+                                             MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info{};
+        info.cbSize = sizeof(info);
+        if (monitor && GetMonitorInfoW(monitor, &info)) {
+            const auto autoHideOn = [&](UINT edge) {
+                APPBARDATA bar{};
+                bar.cbSize = sizeof(bar);
+                bar.uEdge  = edge;
+                bar.rc     = info.rcMonitor;
+                return SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &bar) != 0;
+            };
+            if (autoHideOn(ABE_TOP))    work.setTop(work.top() + 1);
+            if (autoHideOn(ABE_BOTTOM)) work.setBottom(work.bottom() - 1);
+            if (autoHideOn(ABE_LEFT))   work.setLeft(work.left() + 1);
+            if (autoHideOn(ABE_RIGHT))  work.setRight(work.right() - 1);
+        }
+    }
+#endif
+    return work;
+}
+
+void MainWindow::keepTitleBarReachable(bool resized)
+{
+    QScreen* target = screen();
+    if (!target)
+        return;
+
+    // Solo importa si arriba hay algo que tape: una barra de tareas (o
+    // cualquier otra barra) en el borde superior de este monitor.
+    const QRect work = workArea();
+    if (work.top() <= target->geometry().top())
+        return;
+
+    QRect frame = frameGeometry();
+    if (frame.top() >= work.top())
+        return;
+
+    // La barra de titulo propia es la unica forma de mover la ventana: si
+    // queda debajo de la barra de tareas no hay como agarrarla. Al moverla se
+    // baja entera; al estirarla por arriba se recorta ese borde, para no
+    // empujar el de abajo fuera de la pantalla.
+    if (resized)
+        frame.setTop(work.top());
+    else
+        frame.moveTop(work.top());
+    setGeometry(frame);
+}
+
+void MainWindow::changeEvent(QEvent* event)
+{
+    QMainWindow::changeEvent(event);
+
+    if (event->type() != QEvent::WindowStateChange || !isMaximized() || isFullScreen())
+        return;
+
+    // Windows la maximizo por su cuenta: arrastrandola al borde de arriba
+    // (Aero Snap) o con Win+Flecha arriba. Sin marco, ese maximizado ocupa
+    // tambien el sitio de la barra de tareas, la de arriba incluida. Se
+    // cambia por el propio, que respeta el area util. En diferido: no se
+    // puede cambiar el estado de la ventana mientras se avisa de el.
+    QTimer::singleShot(0, this, [this]() {
+        if (!isMaximized())
+            return;
+        const QRect normal = normalGeometry();
+        showNormal();
+        m_restoreGeometry = normal.isValid() ? normal : geometry();
+        setGeometry(workArea());
+        m_manualMaximized = true;
+        m_titleBar->setMaximized(true);
+    });
+}
+
+void MainWindow::moveEvent(QMoveEvent* event)
+{
+    QMainWindow::moveEvent(event);
+    // Mientras se decide la combinacion nueva no se apunta nada: es Windows
+    // quien esta moviendo la ventana, no el usuario.
+    if (m_placementSave && !m_screenSetup->isActive())
+        m_placementSave->start();
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QMainWindow::resizeEvent(event);
+    if (m_placementSave && !m_screenSetup->isActive())
+        m_placementSave->start();
+}
+
+void MainWindow::saveWindowPlacement()
+{
+    if (m_screenKey.isEmpty() || isMinimized() || isFullScreen())
+        return;
+
+    Settings::WindowPlacement placement;
+    placement.geometry  = saveGeometry();
+    placement.maximized = m_manualMaximized;
+    placement.normal    = m_manualMaximized ? m_restoreGeometry : QRect();
+    Settings::setWindowPlacement(m_screenKey, placement);
+}
+
+bool MainWindow::restoreWindowPlacement()
+{
+    const Settings::WindowPlacement placement = Settings::windowPlacement(m_screenKey);
+    if (placement.geometry.isEmpty())
+        return false;
+
+    m_manualMaximized = false;
+    restoreGeometry(placement.geometry);
+    if (placement.maximized && placement.normal.isValid()) {
+        m_restoreGeometry = placement.normal;
+        m_manualMaximized = true;
+    }
+    m_titleBar->setMaximized(isWindowMaximized());
+
+    // Por si acaso: con la misma huella el area util puede variar un poco
+    // (la barra de tareas cambiada de sitio, por ejemplo).
+    clampIntoWorkArea();
+    return true;
+}
+
+void MainWindow::fitMaximizedToWorkArea()
+{
+    // La geometria guardada de un maximizado es la del area util de entonces:
+    // si desde aquel dia la barra de tareas cambio de borde o de tamano, se
+    // quedaria una franja vacia o la ventana debajo de la barra. Se recalcula
+    // siempre contra la de ahora, este donde este la barra.
+    if (m_manualMaximized && !m_videoFullscreen && geometry() != workArea())
+        setGeometry(workArea());
+}
+
+void MainWindow::watchScreen(QScreen* screen)
+{
+    // Mover la barra de tareas, cambiarla de tamano u ocultarla cambia el
+    // area util sin cambiar de monitor: el maximizado se reajusta al momento.
+    connect(screen, &QScreen::availableGeometryChanged, this,
+            [this]() { fitMaximizedToWorkArea(); });
+
+    // Cambiar la resolucion o la disposicion de un monitor tambien es otra
+    // combinacion.
+    connect(screen, &QScreen::geometryChanged, this, [this]() {
+        m_placementSave->stop();
+        m_screenSetup->start();
+    });
+}
+
+void MainWindow::onScreenSetupChanged()
+{
+    // Aunque la combinacion acabe siendo la misma (un monitor que se apaga y
+    // se enciende), Windows puede haber movido la ventana entretanto: se
+    // devuelve a lo guardado igualmente. Primera vez con estos monitores: se
+    // queda donde la dejo Windows, pero entera dentro del area util, y desde
+    // aqui se apunta para ellos.
+    m_screenKey = currentScreenKey();
+    if (!restoreWindowPlacement())
+        clampIntoWorkArea();
+    fitMaximizedToWorkArea();
 }
 
 void MainWindow::clampIntoWorkArea()
@@ -1693,7 +2499,7 @@ void MainWindow::clampIntoWorkArea()
     if (!target)
         return;
 
-    const QRect work = target->availableGeometry();
+    const QRect work = workArea();
     QRect frame = frameGeometry();
 
     // La barra de titulo propia es la unica forma de mover, minimizar o cerrar
@@ -1712,72 +2518,735 @@ void MainWindow::clampIntoWorkArea()
         setGeometry(frame);
 }
 
-const char* MainWindow::panelKey(int panel)
+QString MainWindow::layoutPresetName(int preset)
 {
-    switch (panel) {
-    case PanelNowPlaying: return "nowPlaying";
-    case PanelFiles:      return "files";
-    case PanelPlaylist:   return "playlist";
+    switch (preset) {
+    case LayoutClassic:   return Lang::tr("Clasica");
+    case LayoutLibrary:   return Lang::tr("Biblioteca");
+    case LayoutListening: return Lang::tr("Escucha");
+    case LayoutStudio:    return Lang::tr("Estudio");
     }
-    return "";
+    return QString();
 }
 
-QWidget* MainWindow::panelWidget(int panel) const
+void MainWindow::applyLayoutPreset(int preset)
 {
-    switch (panel) {
-    case PanelNowPlaying: return m_nowPlaying;
-    case PanelFiles:      return m_centerColumn;
-    case PanelPlaylist:   return m_playlists;
+    m_layoutCycle = preset;   // "disposicion siguiente" sigue desde aqui
+
+    // Se parte de cero: todos acoplados y fuera de la ventana, y se vuelven
+    // a meter en el orden de la disposicion. Todo va en una sola zona,
+    // anidando divisiones: es lo que permite cualquier reparto sin depender
+    // de las esquinas de QMainWindow.
+    for (PanelDock* dock : m_docks) {
+        dock->setFloating(false);
+        m_dockHost->removeDockWidget(dock);
     }
-    return nullptr;
+
+    PanelDock* now   = m_docks[DockNowPlaying];
+    PanelDock* files = m_docks[DockFiles];
+    PanelDock* list  = m_docks[DockPlaylist];
+    PanelDock* eq    = m_docks[DockEqualizer];
+
+    // El primero de cada disposicion entra en la zona; los demas se
+    // reparten partiendo su sitio.
+    const auto start = [this](PanelDock* first) {
+        m_dockHost->addDockWidget(Qt::LeftDockWidgetArea, first);
+    };
+
+    // Los paneles que una disposicion no muestra tambien se colocan: al
+    // pedirlos luego desde el menu aparecen en un sitio con sentido.
+    switch (preset) {
+    case LayoutLibrary:
+        // [ Archivos | Reproduciendo / Lista ]
+        start(files);
+        m_dockHost->splitDockWidget(files, now, Qt::Horizontal);
+        m_dockHost->splitDockWidget(now, list, Qt::Vertical);
+        m_dockHost->splitDockWidget(files, eq, Qt::Vertical);
+        for (PanelDock* dock : {now, files, list})
+            dock->show();
+        eq->hide();
+        m_dockHost->resizeDocks({files, now}, {1000, 380}, Qt::Horizontal);
+        m_dockHost->resizeDocks({now, list}, {420, 400}, Qt::Vertical);
+        break;
+
+    case LayoutListening:
+        // [ Reproduciendo | Lista ] / Ecualizador, con Archivos en una
+        // pestana junto a la lista.
+        start(now);
+        m_dockHost->splitDockWidget(now, eq, Qt::Vertical);
+        m_dockHost->splitDockWidget(now, list, Qt::Horizontal);
+        m_dockHost->tabifyDockWidget(list, files);
+        for (PanelDock* dock : m_docks)
+            dock->show();
+        list->raise();
+        m_dockHost->resizeDocks({now, list}, {520, 900}, Qt::Horizontal);
+        m_dockHost->resizeDocks({now, eq}, {560, 240}, Qt::Vertical);
+        break;
+
+    case LayoutStudio:
+        // Ecualizador a lo ancho y alto, para trabajar el sonido; arriba
+        // Reproduciendo y la lista, con Archivos en pestana.
+        start(now);
+        m_dockHost->splitDockWidget(now, eq, Qt::Vertical);
+        m_dockHost->splitDockWidget(now, list, Qt::Horizontal);
+        m_dockHost->tabifyDockWidget(list, files);
+        for (PanelDock* dock : m_docks)
+            dock->show();
+        list->raise();
+        m_dockHost->resizeDocks({now, list}, {Theme::Metrics::LeftPanelWidth, 1200},
+                                Qt::Horizontal);
+        m_dockHost->resizeDocks({now, eq}, {360, 440}, Qt::Vertical);
+        break;
+
+    case LayoutClassic:
+    default:
+        // [ Reproduciendo | Archivos | Lista ], con el ecualizador bajo
+        // Archivos y Lista, cerrado hasta que se pida.
+        start(now);
+        m_dockHost->splitDockWidget(now, files, Qt::Horizontal);
+        m_dockHost->splitDockWidget(files, eq, Qt::Vertical);
+        m_dockHost->splitDockWidget(files, list, Qt::Horizontal);
+        for (PanelDock* dock : {now, files, list})
+            dock->show();
+        eq->hide();
+        m_dockHost->resizeDocks({now, files, list},
+                                {Theme::Metrics::LeftPanelWidth, 940,
+                                 Theme::Metrics::RightPanelWidth}, Qt::Horizontal);
+        m_dockHost->resizeDocks({files, eq}, {560, 240}, Qt::Vertical);
+        break;
+    }
+
+    // Los de video se colocan tambien, ocultos: estas son las de audio.
+    m_dockHost->addDockWidget(Qt::LeftDockWidgetArea, m_docks[DockVideo]);
+    m_docks[DockVideo]->hide();
+    m_dockHost->splitDockWidget(m_docks[DockVideo], m_docks[DockVideoFilters], Qt::Vertical);
+    m_docks[DockVideoFilters]->hide();
+
+    m_centerSplitter->setSizes({Theme::Metrics::TreePanelWidth, 700});
 }
 
-void MainWindow::setPanelVisible(int panel, bool visible)
+void MainWindow::applySavedLayout(const QString& name)
 {
-    QWidget* widget = panelWidget(panel);
-    if (!widget)
+    const QList<Settings::SavedLayout> saved = Settings::savedLayouts();
+    for (int i = 0; i < saved.size(); ++i) {
+        if (saved.at(i).name == name) {
+            m_dockHost->restoreState(saved.at(i).state, kDockStateVersion);
+            m_layoutCycle = LayoutPresetCount + i;
+            return;
+        }
+    }
+}
+
+void MainWindow::saveCurrentLayout()
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, Lang::tr("Guardar disposicion"),
+        Lang::tr("Nombre de la disposicion:"), QLineEdit::Normal, QString(), &ok).trimmed();
+    if (!ok || name.isEmpty())
         return;
 
-    // Esconder una columna no la destruye: el divisor la vuelve a colocar en
-    // su sitio, con el tamano que tenia, en cuanto se marca de nuevo.
-    widget->setVisible(visible);
-    Settings::setPanelVisible(QString::fromLatin1(panelKey(panel)), visible);
+    // Un nombre repetido reemplaza a la anterior, como con los presets del
+    // ecualizador; se avisa antes para no pisarla sin querer.
+    for (const Settings::SavedLayout& layout : Settings::savedLayouts()) {
+        if (layout.name != name)
+            continue;
+        const auto answer = QMessageBox::question(
+            this, QStringLiteral("Ryxus Player"),
+            Lang::tr("Ya hay una disposicion llamada \"%1\". Reemplazarla?").arg(name));
+        if (answer != QMessageBox::Yes)
+            return;
+        break;
+    }
+
+    Settings::saveLayout(name, m_dockHost->saveState(kDockStateVersion));
 }
 
-void MainWindow::swapBodyColumns()
+void MainWindow::setAllPanelsVisible(bool visible)
 {
-    // insertWidget sobre un hijo que ya esta dentro lo mueve de sitio.
-    m_bodySplitter->insertWidget(0, m_bodySplitter->widget(1));
-    Settings::setBodySwapped(!Settings::bodySwapped());
+    // Ocultarlos todos deja a la vista el fondo de la ventana entero. El de
+    // video solo se muestra si hay un video abierto.
+    for (PanelDock* dock : m_docks) {
+        if (visible && !m_engine->hasVideo()
+            && (dock == m_docks[DockVideo] || dock == m_docks[DockVideoFilters]))
+            continue;
+        dock->setVisible(visible);
+    }
 }
 
-void MainWindow::swapPanelColumns()
+void MainWindow::togglePanel(int dock)
 {
-    m_panelsSplitter->insertWidget(0, m_panelsSplitter->widget(1));
-    Settings::setPanelsSwapped(!Settings::panelsSwapped());
+    PanelDock* panel = m_docks[dock];
+    const bool show = panel->isHidden();
+    panel->setVisible(show);
+    // Si esta en pestanas con otro, mostrarlo es tambien traerlo delante.
+    if (show)
+        panel->raise();
 }
 
-void MainWindow::resetPanelLayout()
+void MainWindow::cycleLayout(int step)
 {
-    if (Settings::bodySwapped())
-        swapBodyColumns();
-    if (Settings::panelsSwapped())
-        swapPanelColumns();
+    // Recorre en orden las de fabrica y despues las guardadas, y vuelve a
+    // empezar. Se avisa del nombre: con el teclado no se ve que menu se usa.
+    const QList<Settings::SavedLayout> saved = Settings::savedLayouts();
+    const int total = LayoutPresetCount + int(saved.size());
+    m_layoutCycle = ((m_layoutCycle + step) % total + total) % total;
 
-    for (int panel = 0; panel < PanelCount; ++panel)
-        setPanelVisible(panel, true);
+    QString name;
+    if (m_layoutCycle < LayoutPresetCount) {
+        applyLayoutPreset(m_layoutCycle);
+        name = layoutPresetName(m_layoutCycle);
+    } else {
+        name = saved.at(m_layoutCycle - LayoutPresetCount).name;
+        applySavedLayout(name);
+    }
+    showCommandToast(Lang::tr("Disposicion: %1").arg(name));
+}
 
-    m_bodySplitter->setSizes({Theme::Metrics::LeftPanelWidth, 1200});
-    m_panelsSplitter->setSizes({700, Theme::Metrics::RightPanelWidth});
-    m_centerSplitter->setSizes({Theme::Metrics::TreePanelWidth, 700});
+// ------------------------------------------------------------------- video
+
+QString MainWindow::videoLayoutName(int layout)
+{
+    switch (layout) {
+    case VideoCinema:        return Lang::tr("Solo la imagen");
+    case VideoWithPlaylist:  return Lang::tr("Imagen y lista");
+    case VideoWithEqualizer: return Lang::tr("Imagen y banco de filtros");
+    case VideoStudio:        return Lang::tr("Estudio");
+    }
+    return QString();
+}
+
+void MainWindow::applyVideoLayout(int layout)
+{
+    Settings::setVideoLayout(layout);
+
+    for (PanelDock* dock : m_docks) {
+        dock->setFloating(false);
+        m_dockHost->removeDockWidget(dock);
+    }
+
+    PanelDock* video = m_docks[DockVideo];
+    PanelDock* now   = m_docks[DockNowPlaying];
+    PanelDock* files = m_docks[DockFiles];
+    PanelDock* list  = m_docks[DockPlaylist];
+    PanelDock* eq    = m_docks[DockEqualizer];
+    PanelDock* filters = m_docks[DockVideoFilters];
+
+    // La imagen manda: entra la primera y los demas se reparten su sitio.
+    m_dockHost->addDockWidget(Qt::LeftDockWidgetArea, video);
+    QList<PanelDock*> shown{video};
+
+    // Qt no reparte tamanos entre paneles ocultos: se muestran antes de
+    // llamar a resizeDocks, o los anchos y altos pedidos no se aplican.
+    const auto showShown = [&shown]() {
+        for (PanelDock* dock : std::as_const(shown))
+            dock->show();
+    };
+
+    switch (layout) {
+    case VideoWithPlaylist:
+        // La paleta de filtros, bajo la lista.
+        m_dockHost->splitDockWidget(video, list, Qt::Horizontal);
+        m_dockHost->splitDockWidget(list, filters, Qt::Vertical);
+        shown << list << filters;
+        showShown();
+        m_dockHost->resizeDocks({video, list}, {1200, Theme::Metrics::RightPanelWidth},
+                                Qt::Horizontal);
+        break;
+
+    case VideoWithEqualizer:
+        // El banco de filtros debajo, con la paleta de filtros de imagen a su
+        // derecha: el sonido y el aspecto del video, uno al lado del otro.
+        m_dockHost->splitDockWidget(video, eq, Qt::Vertical);
+        m_dockHost->splitDockWidget(eq, filters, Qt::Horizontal);
+        shown << eq << filters;
+        showShown();
+        m_dockHost->resizeDocks({video, eq}, {560, 240}, Qt::Vertical);
+        // El ecualizador no pasa de ~900 px con el rack cerrado: el resto,
+        // para que la paleta muestre mas miniaturas por fila.
+        m_dockHost->resizeDocks({eq, filters}, {920, 1080}, Qt::Horizontal);
+        break;
+
+    case VideoStudio:
+        // [ imagen / banco de filtros + paleta | reproduciendo / lista ]
+        m_dockHost->splitDockWidget(video, now, Qt::Horizontal);
+        m_dockHost->splitDockWidget(video, eq, Qt::Vertical);
+        m_dockHost->splitDockWidget(eq, filters, Qt::Horizontal);
+        m_dockHost->splitDockWidget(now, list, Qt::Vertical);
+        shown << now << list << eq << filters;
+        showShown();
+        m_dockHost->resizeDocks({video, now}, {1150, 380}, Qt::Horizontal);
+        m_dockHost->resizeDocks({video, eq}, {520, 240}, Qt::Vertical);
+        m_dockHost->resizeDocks({eq, filters}, {700, 450}, Qt::Horizontal);
+        break;
+
+    case VideoCinema:
+    default:
+        // La imagen y, debajo, una tira con la paleta de filtros: lo minimo
+        // para cambiar el aspecto sin ir a buscarlo.
+        m_dockHost->splitDockWidget(video, filters, Qt::Vertical);
+        shown << filters;
+        showShown();
+        m_dockHost->resizeDocks({video, filters}, {900, 150}, Qt::Vertical);
+        break;
+    }
+
+    // Cerrada por el usuario: se coloca, pero no se muestra.
+    if (!Settings::videoFiltersVisible()) {
+        shown.removeAll(filters);
+        filters->hide();
+    }
+
+    // Los que no salen se colocan igualmente, ocultos, en una pestana junto
+    // a la imagen: pedirlos luego desde el menu los trae a un sitio sensato.
+    for (PanelDock* dock : {now, files, list, eq}) {
+        if (shown.contains(dock))
+            continue;
+        m_dockHost->tabifyDockWidget(video, dock);
+        dock->hide();
+    }
+    for (PanelDock* dock : std::as_const(shown))
+        dock->show();
+    video->raise();
+}
+
+void MainWindow::onVideoActiveChanged()
+{
+    const bool active = m_engine->hasVideo();
+    if (active) {
+        // La disposicion de audio se guarda una sola vez, al entrar: entre
+        // un video y el siguiente ya estamos en la de video.
+        if (!m_inVideoMode) {
+            m_audioLayoutState = m_dockHost->saveState(kDockStateVersion);
+            m_inVideoMode = true;
+        }
+        applyVideoLayout(Settings::videoLayout());
+        // El teclado al video: las flechas avanzan y cambian el volumen sin
+        // que el foco se quede en una lista que ahora no se ve.
+        m_video->setFocus(Qt::OtherFocusReason);
+        return;
+    }
+
+    m_video->clear();
+    if (!m_inVideoMode)
+        return;
+    m_inVideoMode = false;
+    if (m_videoFullscreen)
+        toggleVideoFullscreen();
+    m_dockHost->restoreState(m_audioLayoutState, kDockStateVersion);
+    m_docks[DockVideo]->hide();
+    m_docks[DockVideoFilters]->hide();
+}
+
+void MainWindow::fillVideoMenu(QMenu* menu)
+{
+    const QColor iconColor = Theme::TextDim;
+    const auto withKeys = [](const QString& text, int command) {
+        const QString keys = Commands::keysText(command);
+        return keys.isEmpty() ? text : text + QLatin1Char('\t') + keys;
+    };
+    const auto addCommand = [this, &withKeys](QMenu* target, int command,
+                                              const QString& text) {
+        QAction* action = target->addAction(withKeys(text, command));
+        connect(action, &QAction::triggered, this, [this, command]() { runCommand(command); });
+        return action;
+    };
+
+    const bool video = m_engine->hasVideo();
+
+    // --- idioma de audio -----------------------------------------------------
+    QMenu* audio = menu->addMenu(Icons::icon(Icons::Volume, iconColor),
+                                 Lang::tr("Idioma de audio"));
+    audio->setFont(Theme::uiFont(9));
+    {
+        auto* group = new QActionGroup(audio);
+        const QStringList tracks = m_engine->audioTrackNames();
+        const QString external = m_engine->externalAudio();
+        const int active = external.isEmpty() ? m_engine->activeAudioTrack() : -1;
+        for (int i = 0; i < tracks.size(); ++i) {
+            QAction* action = audio->addAction(tracks.at(i));
+            action->setCheckable(true);
+            action->setChecked(i == active);
+            group->addAction(action);
+            connect(action, &QAction::triggered, this, [this, i]() { m_engine->setAudioTrack(i); });
+        }
+        if (!external.isEmpty()) {
+            QAction* action = audio->addAction(
+                Lang::tr("Pista externa: %1").arg(QFileInfo(external).fileName()));
+            action->setCheckable(true);
+            action->setChecked(true);
+            group->addAction(action);
+        }
+        if (tracks.isEmpty() && external.isEmpty())
+            audio->addAction(Lang::tr("El video no trae pistas de audio"))->setEnabled(false);
+
+        audio->addSeparator();
+        addCommand(audio, Commands::AddAudioTrack, Lang::tr("Anadir pista de audio..."))
+            ->setEnabled(video);
+        if (!external.isEmpty()) {
+            audio->addAction(Lang::tr("Quitar la pista externa"), this,
+                             [this]() { m_engine->clearExternalAudio(); });
+        }
+    }
+
+    // --- subtitulos ------------------------------------------------------------
+    QMenu* subtitles = menu->addMenu(Icons::icon(Icons::Tag, iconColor),
+                                     Lang::tr("Subtitulos"));
+    subtitles->setFont(Theme::uiFont(9));
+    {
+        auto* group = new QActionGroup(subtitles);
+        const QString file = m_video->subtitlesPath();
+        const int active = file.isEmpty() ? m_engine->activeSubtitleTrack() : -2;
+
+        QAction* off = subtitles->addAction(Lang::tr("Desactivados"));
+        off->setCheckable(true);
+        off->setChecked(active == -1);
+        group->addAction(off);
+        connect(off, &QAction::triggered, this, [this]() {
+            m_video->clearSubtitles();
+            m_engine->setSubtitleTrack(-1);
+        });
+
+        const QStringList tracks = m_engine->subtitleTrackNames();
+        for (int i = 0; i < tracks.size(); ++i) {
+            QAction* action = subtitles->addAction(tracks.at(i));
+            action->setCheckable(true);
+            action->setChecked(i == active);
+            group->addAction(action);
+            connect(action, &QAction::triggered, this, [this, i]() {
+                m_video->clearSubtitles();
+                m_engine->setSubtitleTrack(i);
+            });
+        }
+        if (!file.isEmpty()) {
+            QAction* action = subtitles->addAction(
+                Lang::tr("Archivo: %1").arg(QFileInfo(file).fileName()));
+            action->setCheckable(true);
+            action->setChecked(true);
+            group->addAction(action);
+        }
+
+        subtitles->addSeparator();
+        addCommand(subtitles, Commands::AddSubtitles, Lang::tr("Anadir subtitulos..."))
+            ->setEnabled(video);
+        subtitles->addAction(Lang::tr("Estilo de subtitulos..."), this, [this]() {
+            openSettings();
+            m_settings->showSubtitleStyle();
+        });
+    }
+
+    menu->addSeparator();
+
+    // --- disposiciones de video ------------------------------------------
+    QMenu* layouts = menu->addMenu(Icons::icon(Icons::Grip, iconColor),
+                                   Lang::tr("Disposicion de video"));
+    layouts->setFont(Theme::uiFont(9));
+    const int kLayoutCommands[VideoLayoutCount] = {
+        Commands::VideoCinema, Commands::VideoWithPlaylist,
+        Commands::VideoWithEqualizer, Commands::VideoStudio,
+    };
+    const int current = Settings::videoLayout();
+    for (int layout = 0; layout < VideoLayoutCount; ++layout) {
+        QAction* action = addCommand(layouts, kLayoutCommands[layout], videoLayoutName(layout));
+        action->setCheckable(true);
+        action->setChecked(layout == current);
+    }
+
+    // --- banco de filtros sobre el audio del video -------------------------
+    QAction* filters = addCommand(menu, Commands::EqualizerPanel,
+                                  Lang::tr("Mostrar el banco de filtros (ecualizador y efectos)"));
+    filters->setIcon(Icons::icon(Icons::Equalizer, iconColor));
+    filters->setCheckable(true);
+    filters->setChecked(!m_docks[DockEqualizer]->isHidden());
+
+    QAction* palette = addCommand(menu, Commands::VideoFilters,
+                                  Lang::tr("Mostrar la paleta de filtros de video"));
+    palette->setCheckable(true);
+    palette->setChecked(!m_docks[DockVideoFilters]->isHidden());
+
+    menu->addSeparator();
+
+    // --- mascaras de imagen -------------------------------------------------
+    QMenu* masks = menu->addMenu(Icons::icon(Icons::Image, iconColor), Lang::tr("Mascara"));
+    masks->setFont(Theme::uiFont(9));
+    addCommand(masks, Commands::NextVideoMask, Lang::tr("Mascara siguiente"));
+    masks->addSeparator();
+    auto* group = new QActionGroup(masks);
+    group->setExclusive(true);
+    for (int mask = 0; mask < VideoMasks::Count; ++mask) {
+        QAction* action = masks->addAction(VideoMasks::name(mask));
+        action->setCheckable(true);
+        action->setChecked(m_video->mask() == mask);
+        group->addAction(action);
+        connect(action, &QAction::triggered, this, [this, mask]() { setVideoMask(mask); });
+    }
+
+    // --- gestos en pantalla ------------------------------------------------
+    QMenu* gestures = menu->addMenu(Icons::icon(Icons::ArrowRight, iconColor),
+                                    Lang::tr("Gestos en pantalla"));
+    gestures->setFont(Theme::uiFont(9));
+    {
+        const auto addToggle = [this, gestures](const QString& text, bool on,
+                                                void (*save)(bool)) {
+            QAction* action = gestures->addAction(text);
+            action->setCheckable(true);
+            action->setChecked(on);
+            connect(action, &QAction::toggled, this, [this, save](bool value) {
+                save(value);
+                applyVideoGestureSettings();
+            });
+        };
+        addToggle(Lang::tr("Arrastrar a los lados: avanzar y retroceder"),
+                  Settings::videoGestureSeek(), &Settings::setVideoGestureSeek);
+        addToggle(Lang::tr("Arrastrar arriba y abajo: volumen"),
+                  Settings::videoGestureVolume(), &Settings::setVideoGestureVolume);
+        addToggle(Lang::tr("Rueda del raton: avanzar y retroceder"),
+                  Settings::videoGestureWheel(), &Settings::setVideoGestureWheel);
+        gestures->addSeparator();
+    }
+
+    // --- sensibilidad del arrastre por fotogramas ----------------------------
+    QMenu* scrub = gestures->addMenu(Icons::icon(Icons::ArrowRight, iconColor),
+                                     Lang::tr("Sensibilidad de arrastre"));
+    scrub->setFont(Theme::uiFont(9));
+    QAction* hint = scrub->addAction(Lang::tr("Arrastra sobre la imagen para moverte por fotogramas"));
+    hint->setEnabled(false);
+    scrub->addSeparator();
+    {
+        const struct { int frames; const char* label; } kSteps[] = {
+            {2,   "Muy fina: 2 fotogramas cada 100 px"},
+            {5,   "Fina: 5 fotogramas cada 100 px"},
+            {10,  "Normal: 10 fotogramas cada 100 px"},
+            {25,  "Rapida: 25 fotogramas cada 100 px"},
+            {60,  "Muy rapida: 60 fotogramas cada 100 px"},
+            {200, "Saltos largos: 200 fotogramas cada 100 px"},
+        };
+        auto* group = new QActionGroup(scrub);
+        const int current = Settings::videoScrubFramesPer100();
+        for (const auto& step : kSteps) {
+            QAction* action = scrub->addAction(Lang::tr(step.label));
+            action->setCheckable(true);
+            action->setChecked(step.frames == current);
+            group->addAction(action);
+            const int frames = step.frames;
+            connect(action, &QAction::triggered, this, [this, frames]() {
+                Settings::setVideoScrubFramesPer100(frames);
+                m_video->setScrubFramesPer100(frames);
+            });
+        }
+    }
+
+    // --- tamano de la previsualizacion ---------------------------------------
+    QMenu* preview = gestures->addMenu(Lang::tr("Tamano de la previsualizacion"));
+    preview->setFont(Theme::uiFont(9));
+    {
+        auto* group = new QActionGroup(preview);
+        const int current = Settings::videoPreviewWidth();
+        const struct { int width; const char* label; } kSizes[] = {
+            {160, "Pequena"}, {260, "Mediana"}, {380, "Grande"}, {520, "Muy grande"},
+        };
+        for (const auto& size : kSizes) {
+            QAction* action = preview->addAction(
+                Lang::tr("%1 (%2 px)").arg(Lang::tr(size.label)).arg(size.width));
+            action->setCheckable(true);
+            action->setChecked(size.width == current);
+            group->addAction(action);
+            const int width = size.width;
+            connect(action, &QAction::triggered, this, [this, width]() {
+                Settings::setVideoPreviewWidth(width);
+                applyVideoGestureSettings();
+            });
+        }
+    }
+
+    // --- barra de volumen: forma y color -------------------------------------
+    QMenu* volumeBar = gestures->addMenu(Icons::icon(Icons::Volume, iconColor),
+                                         Lang::tr("Barra de volumen"));
+    volumeBar->setFont(Theme::uiFont(9));
+    {
+        auto* shapes = new QActionGroup(volumeBar);
+        const int currentShape = Settings::volumeBarShape();
+        for (int shape = 0; shape < VideoPanel::VolumeShapeCount; ++shape) {
+            QAction* action = volumeBar->addAction(VideoPanel::volumeShapeName(shape));
+            action->setCheckable(true);
+            action->setChecked(shape == currentShape);
+            shapes->addAction(action);
+            connect(action, &QAction::triggered, this, [this, shape]() {
+                Settings::setVolumeBarShape(shape);
+                applyVideoGestureSettings();
+                m_video->showVolumeOsd(m_engine->volume());   // se ve como queda
+            });
+        }
+        volumeBar->addSeparator();
+
+        auto* colors = new QActionGroup(volumeBar);
+        const QString currentColor = Settings::volumeBarColor();
+        const struct { const char* name; const char* label; } kColors[] = {
+            {"", "Color del tema"}, {"#ffffff", "Blanco"}, {"#3ddc84", "Verde"},
+            {"#4aa3ff", "Azul"}, {"#ff9f43", "Naranja"}, {"#ff5fa2", "Rosa"},
+            {"#ff4d4d", "Rojo"},
+        };
+        bool matched = false;
+        for (const auto& entry : kColors) {
+            const QString name = QString::fromLatin1(entry.name);
+            QAction* action = volumeBar->addAction(Lang::tr(entry.label));
+            if (!name.isEmpty()) {
+                QPixmap swatch(14, 14);
+                swatch.fill(QColor(name));
+                action->setIcon(QIcon(swatch));
+            }
+            action->setCheckable(true);
+            const bool on = name.compare(currentColor, Qt::CaseInsensitive) == 0;
+            matched = matched || on;
+            action->setChecked(on);
+            colors->addAction(action);
+            connect(action, &QAction::triggered, this, [this, name]() {
+                Settings::setVolumeBarColor(name);
+                applyVideoGestureSettings();
+                m_video->showVolumeOsd(m_engine->volume());
+            });
+        }
+        QAction* custom = volumeBar->addAction(Lang::tr("Elegir otro color..."));
+        custom->setCheckable(true);
+        custom->setChecked(!matched);
+        colors->addAction(custom);
+        connect(custom, &QAction::triggered, this, [this]() {
+            const QString current = Settings::volumeBarColor();
+            const QColor chosen = QColorDialog::getColor(
+                current.isEmpty() ? Theme::AccentBright : QColor(current), this,
+                Lang::tr("Color de la barra de volumen"));
+            if (!chosen.isValid())
+                return;
+            Settings::setVolumeBarColor(chosen.name());
+            applyVideoGestureSettings();
+            m_video->showVolumeOsd(m_engine->volume());
+        });
+    }
+
+    gestures->addSeparator();
+    fillStepMenus(gestures);
+
+    menu->addSeparator();
+    QAction* fullscreen = addCommand(menu, Commands::VideoFullscreen,
+                                     Lang::tr("Pantalla completa"));
+    fullscreen->setCheckable(true);
+    fullscreen->setChecked(m_videoFullscreen);
+}
+
+void MainWindow::showVideoMenu(const QPoint& globalPos)
+{
+    QMenu menu(this);
+    menu.setFont(Theme::uiFont(9));
+    fillVideoMenu(&menu);
+    menu.exec(globalPos);
+}
+
+void MainWindow::addAudioTrackDialog()
+{
+    if (!m_engine->hasVideo())
+        return;
+    const QString start = QFileInfo(m_engine->currentPath()).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(
+        this, Lang::tr("Anadir pista de audio"), start, TrackInfo::supportedFilter());
+    if (path.isEmpty())
+        return;
+    if (m_engine->setExternalAudio(path))
+        showCommandToast(Lang::tr("Pista de audio: %1").arg(QFileInfo(path).fileName()));
+}
+
+void MainWindow::addSubtitlesDialog()
+{
+    if (!m_engine->hasVideo())
+        return;
+    const QString start = QFileInfo(m_engine->currentPath()).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(
+        this, Lang::tr("Anadir subtitulos"), start, Subtitles::fileFilter());
+    if (path.isEmpty())
+        return;
+
+    if (!m_video->loadSubtitles(path)) {
+        QMessageBox::warning(this, QStringLiteral("Ryxus Player"),
+                             Lang::tr("No se encontraron subtitulos en %1.")
+                                 .arg(QFileInfo(path).fileName()));
+        return;
+    }
+    // Los del propio video se apagan para no ver dos a la vez.
+    m_engine->setSubtitleTrack(-1);
+    showCommandToast(Lang::tr("Subtitulos: %1").arg(QFileInfo(path).fileName()));
+}
+
+void MainWindow::loadSidecarSubtitles(const QString& videoPath)
+{
+    // "pelicula.mkv" -> "pelicula.srt", "pelicula.es.srt", "pelicula.vtt"...
+    const QFileInfo video(videoPath);
+    const QDir dir = video.absoluteDir();
+    const QStringList candidates = dir.entryList(
+        {video.completeBaseName() + QStringLiteral("*.srt"),
+         video.completeBaseName() + QStringLiteral("*.vtt"),
+         video.completeBaseName() + QStringLiteral("*.ass"),
+         video.completeBaseName() + QStringLiteral("*.ssa")},
+        QDir::Files, QDir::Name);
+    for (const QString& name : candidates) {
+        if (m_video->loadSubtitles(dir.absoluteFilePath(name)))
+            return;
+    }
+}
+
+void MainWindow::setVideoMask(int mask)
+{
+    m_video->setMask(mask);
+    m_videoFilters->setCurrentMask(mask);
+    Settings::setVideoMask(mask);
+}
+
+void MainWindow::setVideoFiltersVisible(bool visible)
+{
+    // Lo que se elige aqui se recuerda: las disposiciones de video la sacan o
+    // no segun esto.
+    Settings::setVideoFiltersVisible(visible);
+    PanelDock* dock = m_docks[DockVideoFilters];
+    dock->setVisible(visible);
+    if (visible)
+        dock->raise();
+}
+
+void MainWindow::toggleVideoFullscreen()
+{
+    if (!m_videoFullscreen) {
+        // Solo la imagen, sin barras ni otros paneles, ocupando la pantalla.
+        // Se apunta como estaba todo para dejarlo igual al salir (Esc).
+        m_preFullscreenDocks = m_dockHost->saveState(kDockStateVersion);
+        m_preFullscreenGeometry = geometry();
+        m_videoFullscreen = true;
+
+        for (PanelDock* dock : m_docks) {
+            if (dock != m_docks[DockVideo])
+                dock->hide();
+        }
+        m_docks[DockVideo]->setFloating(false);
+        m_docks[DockVideo]->show();
+        m_titleBar->hide();
+        m_playerBar->hide();
+        showFullScreen();
+        showCommandToast(Lang::tr("Esc para salir de la pantalla completa"));
+        return;
+    }
+
+    m_videoFullscreen = false;
+    showNormal();
+    setGeometry(m_preFullscreenGeometry);
+    m_titleBar->show();
+    m_playerBar->show();
+    m_dockHost->restoreState(m_preFullscreenDocks, kDockStateVersion);
 }
 
 void MainWindow::toggleEqualizerPanel(bool visible)
 {
-    m_equalizer->setVisible(visible);
-    Settings::setEqPanelVisible(visible);
-    // El plot solo consume FFT mientras se ve y hay audio.
-    m_equalizer->setAnalyzerActive(visible && audioIsFlowing());
+    PanelDock* dock = m_docks[DockEqualizer];
+    dock->setVisible(visible);
+    // Si esta en pestanas con otro panel, abrirlo es tambien traerlo delante.
+    if (visible)
+        dock->raise();
 }
 
 // --- redimensionado de la ventana sin marco --------------------------------
@@ -1797,6 +3266,37 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // La ventana no tiene marco, asi que el borde sensible al redimensionado
     // se detecta a mano. El filtro es global porque los paneles hijos se
     // comen los eventos de raton antes de que lleguen a la ventana.
+    // Las flechas son ordenes (volumen, avanzar), pero en una lista o un campo
+    // de texto con el foco siguen moviendose por ellos: aceptar el
+    // ShortcutOverride le devuelve la tecla al control. En deslizadores y
+    // desplegables mandan las ordenes: una flecha no debe cambiar sin querer
+    // el preset del ecualizador. Un control oculto (la lista de archivos en
+    // una disposicion de video) tampoco se queda las flechas.
+    if (event->type() == QEvent::ShortcutOverride) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        const int k = key->key();
+        const bool arrow = (k == Qt::Key_Left || k == Qt::Key_Right
+                            || k == Qt::Key_Up || k == Qt::Key_Down)
+                           && (key->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
+        auto* focused = qobject_cast<QWidget*>(watched);
+        if (arrow && focused && focused->isVisible()
+            && (qobject_cast<QAbstractItemView*>(watched)
+                      || qobject_cast<QAbstractSpinBox*>(watched)
+                      || qobject_cast<QLineEdit*>(watched)
+                      || qobject_cast<QTextEdit*>(watched)
+                      || qobject_cast<QPlainTextEdit*>(watched)
+                      || qobject_cast<QKeySequenceEdit*>(watched))) {
+            key->accept();
+            return true;
+        }
+    }
+
+    if (m_videoFullscreen && event->type() == QEvent::KeyPress
+        && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        toggleVideoFullscreen();
+        return true;
+    }
+
     if (isWindowMaximized() || isFullScreen())
         return QMainWindow::eventFilter(watched, event);
 

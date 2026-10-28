@@ -3,6 +3,7 @@
 #include "core/AudioEngine.h"
 #include "core/PlaylistModel.h"
 #include "core/TrackInfo.h"
+#include "ui/Commands.h"
 
 #include <QMainWindow>
 #include <QVector>
@@ -14,14 +15,20 @@ class LibraryPanel;
 class LibraryScanner;
 class MetadataEditor;
 class NowPlayingPanel;
+class PanelDock;
 class PlayerBar;
 class PlaylistPanel;
 class RibbonTabBar;
 class SettingsDialog;
 class SystemAudioTap;
 class TitleBar;
+class VideoFilterPanel;
+class VideoPanel;
 class WaveformWorker;
 
+class QMenu;
+class QScreen;
+class QShortcut;
 class QSplitter;
 class QStackedWidget;
 class QThread;
@@ -41,6 +48,19 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
+
+    // Windows avisa a las ventanas cuando se conecta o desconecta hardware:
+    // asi se ven las interfaces USB enchufadas con el programa abierto.
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
+
+    // Cada movimiento o cambio de tamano se apunta para la combinacion de
+    // monitores actual (con un respiro, para no escribir a cada pixel).
+    void moveEvent(QMoveEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+
+    // Convierte el maximizado de Windows (Aero Snap, Win+Flecha arriba) en el
+    // propio, que no tapa la barra de tareas.
+    void changeEvent(QEvent* event) override;
 
     // Arrastrar pistas o carpetas desde el Explorador a la ventana.
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -101,11 +121,17 @@ private slots:
     void runUninstaller();
     void toggleEqualizerPanel(bool visible);
 
-    // --- disposicion de las columnas ---------------------------------------
-    void setPanelVisible(int panel, bool visible);
-    void swapBodyColumns();
-    void swapPanelColumns();
-    void resetPanelLayout();
+    // --- ordenes con atajo (ver Commands) ----------------------------------
+    void runCommand(int command);
+    void applyShortcuts();   // tras cambiar atajos en Configuracion
+
+    // --- paneles y disposiciones -------------------------------------------
+    void setAllPanelsVisible(bool visible);
+    void togglePanel(int dock);
+    void cycleLayout(int step);   // +1 siguiente, -1 anterior
+    void applyLayoutPreset(int preset);
+    void applySavedLayout(const QString& name);
+    void saveCurrentLayout();
     void cycleRepeatMode();
     void openFilesDialog();
 
@@ -119,6 +145,36 @@ private:
 
     void applyBackgroundSettings();
 
+    // Gestos de la barra inferior que tambien tienen atajo.
+    void setShuffleEnabled(bool enabled);
+    void toggleMute();
+    void stepVolume(float delta);
+    void setVolumeTo(float volume);
+    void seekBy(qint64 deltaMs);        // avanzar / retroceder, con aviso en el video
+    void fillStepMenus(QMenu* menu);    // paso de las flechas (salto y volumen)
+    void applyVideoGestureSettings();
+    void stepAbLoop();
+    void cycleVisualization();
+
+    // Aviso breve con lo que acaba de hacer un atajo (que disposicion,
+    // que visualizacion...).
+    void showCommandToast(const QString& text);
+
+    // Arranca la captura del sistema con el reparto guardado y, si Windows
+    // todavia no la deja abrir, la vuelve a intentar sola al rato.
+    void startSystemAudio();
+
+    // Tamano y posicion de la ventana por combinacion de monitores. Ver
+    // Settings::WindowPlacement.
+    void saveWindowPlacement();
+    bool restoreWindowPlacement();
+    void watchScreen(QScreen* screen);
+    void onScreenSetupChanged();
+
+    // Se conecto o desconecto un dispositivo: refresca las listas de Ajustes
+    // y, si la captura estaba esperando a su interfaz, la vuelve a intentar.
+    void onAudioDevicesChanged();
+
     // Maximizado propio contra el area de trabajo, y rescate de la ventana
     // cuando la sesion anterior la dejo fuera de ella. Ver toggleMaximized().
     bool isWindowMaximized() const { return m_manualMaximized || isMaximized(); }
@@ -128,6 +184,17 @@ private:
     // onda del panel izquierdo se mueven en los dos casos.
     bool audioIsFlowing() const;
     void clampIntoWorkArea();
+
+    // Area util del monitor de la ventana: sin las barras de tareas, este
+    // donde este cada una, y con una linea libre si alguna se oculta sola.
+    QRect workArea() const;
+
+    // Maximizado a mano: vuelve a ocupar exactamente el area util actual.
+    void fitMaximizedToWorkArea();
+
+    // Tras arrastrar o estirar: que la barra de titulo no quede debajo de una
+    // barra de tareas puesta arriba.
+    void keepTitleBarReachable(bool resized);
     void repaintForTransparency();
     void loadTrackIntoUi(const TrackInfo& info);
     void refreshTrackEverywhere(const TrackInfo& info);
@@ -161,16 +228,62 @@ private:
     EqualizerPanel*  m_equalizer  = nullptr;
     SettingsDialog*  m_settings   = nullptr;
     SystemAudioTap*  m_systemAudio = nullptr;
+    QTimer*          m_systemAudioRetry = nullptr;
+    int              m_systemAudioTries = 0;
+    QTimer*          m_deviceChange = nullptr;   // agrupa la rafaga de avisos
+    QList<QByteArray> m_presentOutputs;          // salidas en el ultimo vistazo
     PlayerBar*       m_playerBar  = nullptr;
     QSplitter*       m_centerSplitter = nullptr;
-    QSplitter*       m_bodySplitter   = nullptr;
-    QSplitter*       m_panelsSplitter = nullptr;
     QWidget*         m_centerColumn   = nullptr;
 
-    // Columnas que se pueden ocultar una a una para ver el fondo.
-    enum Panel { PanelNowPlaying = 0, PanelFiles, PanelPlaylist, PanelCount };
-    static const char* panelKey(int panel);
-    QWidget* panelWidget(int panel) const;
+    // Paneles acoplables (ver PanelDock) y el QMainWindow interno que los
+    // reparte. Ocultarlos deja ver el fondo de la ventana.
+    enum Dock { DockNowPlaying = 0, DockFiles, DockPlaylist, DockEqualizer, DockVideo,
+                DockVideoFilters, DockCount };
+    QMainWindow* m_dockHost = nullptr;
+    PanelDock*   m_docks[DockCount] = {};
+
+    // Disposiciones de fabrica: puntos de partida para la de cada usuario.
+    enum LayoutPreset { LayoutClassic = 0, LayoutLibrary, LayoutListening, LayoutStudio,
+                        LayoutPresetCount };
+    static QString layoutPresetName(int preset);
+
+    // --- video ------------------------------------------------------------
+    // Disposiciones para cuando hay imagen; van en su propio menu (Video),
+    // aparte de las de audio. Al abrir un video se pasa sola a la ultima
+    // usada, y al volver a la musica se recupera la disposicion de antes.
+    enum VideoLayout { VideoCinema = 0, VideoWithPlaylist, VideoWithEqualizer, VideoStudio,
+                       VideoLayoutCount };
+    static QString videoLayoutName(int layout);
+    void applyVideoLayout(int layout);
+    void onVideoActiveChanged();
+    void fillVideoMenu(QMenu* menu);
+    void showVideoMenu(const QPoint& globalPos);
+    void setVideoMask(int mask);
+    void toggleVideoFullscreen();
+    void addAudioTrackDialog();
+    void addSubtitlesDialog();
+    void loadSidecarSubtitles(const QString& videoPath);
+
+    VideoPanel* m_video = nullptr;
+    VideoFilterPanel* m_videoFilters = nullptr;
+    void setVideoFiltersVisible(bool visible);
+    QTimer*     m_videoModeTimer = nullptr;    // agrupa el baile al cambiar de video
+    bool        m_inVideoMode = false;
+    QByteArray  m_audioLayoutState;            // la de audio, para volver a ella
+    bool        m_videoFullscreen = false;
+    QByteArray  m_preFullscreenDocks;
+    QRect       m_preFullscreenGeometry;
+
+    // Se sube si cambian los paneles de forma que una disposicion guardada ya
+    // no tenga sentido: restoreState la rechaza y se parte de la clasica.
+    static constexpr int kDockStateVersion = 1;
+
+    // Posicion en el recorrido de "disposicion siguiente": primero las de
+    // fabrica y despues las guardadas.
+    int m_layoutCycle = 0;
+
+    QShortcut* m_shortcuts[Commands::Count] = {};
 
     // --- estado ------------------------------------------------------------
     TrackInfo m_currentTrack;   // la que suena
@@ -189,4 +302,12 @@ private:
     // Maximizado a mano: geometria a la que se vuelve al restaurar.
     QRect m_restoreGeometry;
     bool  m_manualMaximized = false;
+    QSize m_sizeMoveStart;   // tamano al empezar un arrastre de Windows
+
+    // Combinacion de monitores para la que se esta guardando la ventana. Al
+    // cambiar, Windows mueve la ventana por su cuenta: mientras se decide la
+    // nueva no se guarda nada, para no pisar lo de ninguna de las dos.
+    QString m_screenKey;
+    QTimer* m_placementSave = nullptr;
+    QTimer* m_screenSetup   = nullptr;
 };

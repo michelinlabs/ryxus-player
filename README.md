@@ -1,9 +1,9 @@
 # Ryxus Player
 
-Reproductor de audio de escritorio en C++17 / Qt 6 para Windows: interfaz
-oscura de tres columnas, ecualizador paramétrico de 12 bandas con espectro en
-vivo, rack de efectos y editor de etiquetas que escribe de verdad sobre el
-archivo.
+Reproductor de audio y video de escritorio en C++17 / Qt 6 para Windows:
+interfaz oscura de paneles acoplables, ecualizador paramétrico de 12 bandas con
+espectro en vivo, rack de efectos, video con filtros de imagen y subtítulos, y
+editor de etiquetas que escribe de verdad sobre el archivo.
 
 ![Ryxus Player](docs/screenshot.png)
 
@@ -14,7 +14,21 @@ archivo.
 **Motor de audio propio** sobre [miniaudio](https://miniaud.io) — MP3, FLAC,
 WAV, OGG y compañía. El dispositivo se abre una sola vez a 48 kHz / f32 y el
 decodificador convierte a ese formato, así que cambiar de pista no produce
-cortes ni clics.
+cortes ni clics. Lo que miniaudio no abre (AAC, WMA, Opus, APE...) lo
+decodifica FFmpeg y entra en la misma cadena.
+
+**Video en cualquier formato** (MP4, MKV, WebM, AVI, MOV...) con FFmpeg a
+través de Qt Multimedia. El sonido del video pasa por el ecualizador y los
+efectos como cualquier pista. Diecisiete filtros de imagen (modo cine, HDR,
+escala de grises, vintage, cine negro, visión nocturna...) con miniaturas en
+vivo, idiomas de audio y subtítulos del archivo o de un `.srt` / `.vtt` /
+`.ass` aparte con estilo configurable, pistas de audio externas sincronizadas,
+gestos sobre la imagen (arrastrar para avanzar con previsualización del punto
+de llegada, arrastrar arriba y abajo para el volumen) y pantalla completa.
+
+**Paneles acoplables** al estilo de Photoshop: se mueven, se agrupan en
+pestañas, flotan y se estiran por sus bordes. Disposiciones de fábrica para
+audio y para video, y las que guardes con nombre.
 
 **Ecualizador paramétrico de 12 bandas** al estilo del EQ Eight de Ableton: los
 nodos se arrastran en los dos ejes (horizontal = frecuencia, vertical =
@@ -43,6 +57,13 @@ cambian en vivo, sin reiniciar.
 (cubrir / ajustar / estirar / mosaico), transparencia de los paneles y
 oscurecido de la imagen.
 
+**Atajos de teclado configurables** para casi todo lo del menú, con las
+flechas para avanzar y cambiar el volumen.
+
+**Audio de todo Windows** por el ecualizador con un cable virtual (VB-Cable),
+con un perfil de ecualización por interfaz de audio y cambio automático al
+conectar o desconectar cada una.
+
 **Interfaz en español e inglés.**
 
 Y además: explorador de carpetas al estilo de VS Code (se *abren* carpetas
@@ -56,8 +77,9 @@ paneles.
 
 ## Compilar
 
-Dependencias: **Qt 6.8+**, **TagLib 2.x**, CMake 3.21+ y un compilador C++17.
-miniaudio ya viene incluido en `third_party/`.
+Dependencias: **Qt 6.8+** con el módulo **Qt Multimedia** (trae FFmpeg),
+**TagLib 2.x**, CMake 3.21+ y un compilador C++17. miniaudio ya viene incluido
+en `third_party/`.
 
 ```bat
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
@@ -74,7 +96,7 @@ Para instalar las dependencias desde cero:
 
 ```bat
 python -m pip install aqtinstall
-python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O C:/Users/<usuario>/Qt
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtmultimedia -O C:/Users/<usuario>/Qt
 vcpkg install taglib:x64-windows
 ```
 
@@ -89,8 +111,8 @@ caracteristicas* para desinstalarlo como cualquier otro programa, y opcional-
 mente asocia los formatos de audio. Si no lo ejecutas como administrador se
 instala solo para tu usuario, sin pedir permisos.
 
-El instalador lleva dentro Qt, TagLib y el runtime de MSVC: no hace falta
-instalar nada mas.
+El instalador lleva dentro Qt, FFmpeg, TagLib y el runtime de MSVC: no hace
+falta instalar nada mas.
 
 Para construirlo tu mismo hace falta [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 
@@ -112,17 +134,29 @@ RyxusPlayer.exe "tema.flac" "otro.mp3"   REM sirve como "Abrir con..."
 
 ### Atajos
 
+Todos se cambian en Configuración → Atajos de teclado. Los de fábrica:
+
 | Tecla | Acción |
 |---|---|
 | `Espacio` | Reproducir / pausa |
+| `→` / `←` | Avanzar / retroceder (mantener pulsada repite) |
+| `↑` / `↓` | Subir / bajar volumen (mantener pulsada repite) |
 | `Ctrl` + `→` / `←` | Pista siguiente / anterior |
-| `Ctrl` + `↑` / `↓` | Subir / bajar volumen |
 | `Ctrl` + `E` | Mostrar u ocultar el ecualizador |
+| `Ctrl` + `1` / `2` / `3` | Mostrar u ocultar Reproduciendo / Archivos / Lista |
+| `Ctrl` + `Shift` + `M` / `H` | Mostrar / ocultar todos los paneles |
+| `Ctrl` + `L` / `Ctrl` + `Shift` + `L` | Disposición siguiente / anterior |
+| `Alt` + `1`…`4` | Disposiciones de video |
+| `Alt` + `M` | Máscara de video siguiente |
+| `Alt` + `F` | Paleta de filtros de video |
+| `Alt` + `Enter` | Video a pantalla completa (`Esc` para salir) |
 | `Ctrl` + `O` | Abrir archivos |
 | `Ctrl` + `K` | Abrir carpeta |
 | `Enter` | Reproducir la selección de la lista central |
 | `Ins` | Añadir la selección a la lista de reproducción |
 | `F4` | Abrir la pestaña de etiquetas |
+| `F11` | Maximizar / restaurar |
+| `Ctrl` + `,` | Configuración |
 
 ### Detalles que no se ven a primera vista
 
@@ -200,9 +234,9 @@ al 110 % todo sale un 10 % más grande en píxeles físicos.
 
 Código propio bajo **MIT** (ver [`LICENSE`](LICENSE)).
 
-Las dependencias conservan la suya: Qt 6 (LGPLv3) y TagLib (LGPL 2.1 / MPL 1.1)
-se enlazan dinámicamente y se distribuyen como DLL reemplazables; miniaudio es
-de dominio público / MIT-0. El detalle está en
+Las dependencias conservan la suya: Qt 6 (LGPLv3), FFmpeg (LGPL 2.1+) y TagLib
+(LGPL 2.1 / MPL 1.1) se enlazan dinámicamente y se distribuyen como DLL
+reemplazables; miniaudio es de dominio público / MIT-0. El detalle está en
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 La disposición y la paleta se inspiran en los reproductores de escritorio

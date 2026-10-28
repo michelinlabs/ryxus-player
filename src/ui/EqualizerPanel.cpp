@@ -31,7 +31,8 @@ EqualizerPanel::EqualizerPanel(Equalizer* equalizer, AudioEngine* engine, QWidge
     , m_engine(engine)
 {
     setObjectName(QStringLiteral("equalizerPanel"));
-    setFixedHeight(kBaseHeight);
+    // Minimo, no fijo: en un panel acoplable se puede estirar a lo alto.
+    setMinimumHeight(kBaseHeight);
     buildUi();
     loadFromSettings();
 
@@ -72,13 +73,8 @@ void EqualizerPanel::buildUi()
     auto* header = new QHBoxLayout;
     header->setSpacing(8);
 
-    auto* title = new QLabel(Lang::tr("ECUALIZADOR"), inner);
-    QFont titleFont = Theme::uiFont(8, QFont::DemiBold);
-    titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
-    title->setFont(titleFont);
-    title->setObjectName(QStringLiteral("sectionTitle"));
-    header->addWidget(title);
-
+    // El titulo y el boton de cerrar los pone la barra del panel acoplable
+    // (PanelDock) en el que va el ecualizador.
     m_enable = new QCheckBox(Lang::tr("Activado"), inner);
     m_enable->setFont(Theme::uiFont(9));
     header->addWidget(m_enable);
@@ -133,15 +129,6 @@ void EqualizerPanel::buildUi()
     m_hint->setFont(Theme::uiFont(8));
     m_hint->setText(Lang::tr("arrastra los nodos  ·  rueda = Q"));
     header->addWidget(m_hint);
-
-    header->addSpacing(4);
-
-    m_close = new FlatButton(Icons::Close, inner);
-    m_close->setFixedDiameter(24);
-    m_close->setGlyphSize(14);
-    m_close->setStrokeWidth(1.3);
-    header->addWidget(m_close);
-    connect(m_close, &FlatButton::clicked, this, &EqualizerPanel::closeRequested);
 
     root->addLayout(header);
 
@@ -393,6 +380,15 @@ void EqualizerPanel::loadFromSettings()
 
     m_loading = false;
     m_curve->refreshFromEngine();
+
+    // Los efectos van en el mismo perfil que el ecualizador: al cambiar de
+    // interfaz se recargan juntos.
+    m_rack->loadFromSettings();
+}
+
+void EqualizerPanel::setEqualizerEnabled(bool enabled)
+{
+    m_enable->setChecked(enabled);   // el resto lo hace su senal toggled
 }
 
 void EqualizerPanel::saveToSettings() const

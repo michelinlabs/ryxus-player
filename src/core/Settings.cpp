@@ -1,5 +1,6 @@
 #include "core/Settings.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -121,9 +122,16 @@ bool ensureMigrated()
 QSettings& store()
 {
     ensureMigrated();
-    static QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                              QStringLiteral("Ryxus"), QStringLiteral("RyxusPlayer"));
-    return settings;
+    // RYXUS_SETTINGS_FILE lleva los ajustes a otro archivo: sirve para probar
+    // una version sin tocar la configuracion de quien la usa a diario.
+    static QSettings* const settings = [] {
+        const QString file = qEnvironmentVariable("RYXUS_SETTINGS_FILE");
+        return file.isEmpty()
+            ? new QSettings(QSettings::IniFormat, QSettings::UserScope,
+                            QStringLiteral("Ryxus"), QStringLiteral("RyxusPlayer"))
+            : new QSettings(file, QSettings::IniFormat);
+    }();
+    return *settings;
 }
 
 // --- reproductor -----------------------------------------------------------
@@ -312,48 +320,253 @@ void setSystemAudioOutput(const QByteArray& id)
     store().setValue(QStringLiteral("systemAudio/output"), id);
 }
 
+// --- perfiles por interfaz -------------------------------------------------
+namespace {
+
+// Claves del ecualizador que van en el perfil. Los presets de usuario no:
+// son una biblioteca comun a todas las interfaces.
+const QStringList& profileEqKeys()
+{
+    static const QStringList keys = {
+        QStringLiteral("enabled"), QStringLiteral("preamp"), QStringLiteral("gains"),
+        QStringLiteral("freqs"),   QStringLiteral("qs"),     QStringLiteral("preset"),
+    };
+    return keys;
+}
+
+// Todo lo de los efectos menos si el rack esta abierto, que es de la ventana.
+QStringList profileEffectKeys(QSettings& s, const QString& group)
+{
+    s.beginGroup(group);
+    QStringList keys = s.allKeys();
+    s.endGroup();
+    keys.removeAll(QStringLiteral("rackOpen"));
+    return keys;
+}
+
+// El identificador de una salida es un bloque binario largo; como nombre de
+// grupo del .ini vale mas su huella.
+QString profileGroup(const QByteArray& outputId)
+{
+    return QStringLiteral("profiles/")
+         + QString::fromLatin1(QCryptographicHash::hash(outputId, QCryptographicHash::Sha1).toHex());
+}
+
+// Copia eq/ y effects/ de un sitio a otro, borrando antes lo que hubiera en
+// el destino: lo que falta en el origen tiene que volver a su valor por
+// defecto, no quedarse con lo de la otra interfaz.
+void copyAudioState(QSettings& s, const QString& from, const QString& to)
+{
+    const QString fromEq = from + QStringLiteral("eq/");
+    const QString toEq   = to + QStringLiteral("eq/");
+    for (const QString& key : profileEqKeys()) {
+        s.remove(toEq + key);
+        if (s.contains(fromEq + key))
+            s.setValue(toEq + key, s.value(fromEq + key));
+    }
+
+    const QString fromFx = from + QStringLiteral("effects");
+    const QString toFx   = to + QStringLiteral("effects");
+    for (const QString& key : profileEffectKeys(s, toFx))
+        s.remove(toFx + QLatin1Char('/') + key);
+    for (const QString& key : profileEffectKeys(s, fromFx))
+        s.setValue(toFx + QLatin1Char('/') + key, s.value(fromFx + QLatin1Char('/') + key));
+}
+
+} // namespace
+
+void saveOutputProfile(const QByteArray& outputId)
+{
+    if (outputId.isEmpty())
+        return;
+    const QString group = profileGroup(outputId) + QLatin1Char('/');
+    copyAudioState(store(), QString(), group);
+    store().setValue(group + QStringLiteral("saved"), true);
+}
+
+bool loadOutputProfile(const QByteArray& outputId)
+{
+    if (outputId.isEmpty())
+        return false;
+    const QString group = profileGroup(outputId) + QLatin1Char('/');
+    if (!store().value(group + QStringLiteral("saved"), false).toBool())
+        return false;
+    copyAudioState(store(), group, QString());
+    return true;
+}
+
+QList<QByteArray> knownOutputs()
+{
+    QList<QByteArray> ids;
+    const QVariantList list = store().value(QStringLiteral("profiles/known")).toList();
+    for (const QVariant& value : list)
+        ids << value.toByteArray();
+    return ids;
+}
+
+void touchKnownOutput(const QByteArray& outputId)
+{
+    if (outputId.isEmpty())
+        return;
+    QList<QByteArray> ids = knownOutputs();
+    ids.removeAll(outputId);
+    ids.prepend(outputId);
+
+    QVariantList list;
+    for (const QByteArray& id : std::as_const(ids))
+        list << id;
+    store().setValue(QStringLiteral("profiles/known"), list);
+}
+
+void forgetOutput(const QByteArray& outputId)
+{
+    QList<QByteArray> ids = knownOutputs();
+    ids.removeAll(outputId);
+
+    QVariantList list;
+    for (const QByteArray& id : std::as_const(ids))
+        list << id;
+    store().setValue(QStringLiteral("profiles/known"), list);
+    store().remove(profileGroup(outputId));
+}
+
+QString outputName(const QByteArray& outputId)
+{
+    return store().value(profileGroup(outputId) + QStringLiteral("/name")).toString();
+}
+
+void setOutputName(const QByteArray& outputId, const QString& name)
+{
+    if (outputId.isEmpty() || name.isEmpty())
+        return;
+    const QString key = profileGroup(outputId) + QStringLiteral("/name");
+    if (store().value(key).toString() != name)
+        store().setValue(key, name);
+}
+
+bool autoSwitchOutputs()
+{
+    return store().value(QStringLiteral("profiles/autoSwitch"), true).toBool();
+}
+void setAutoSwitchOutputs(bool value)
+{
+    store().setValue(QStringLiteral("profiles/autoSwitch"), value);
+}
+
 // --- interfaz --------------------------------------------------------------
 QByteArray windowGeometry() { return store().value(QStringLiteral("ui/geometry")).toByteArray(); }
 void setWindowGeometry(const QByteArray& v) { store().setValue(QStringLiteral("ui/geometry"), v); }
 
+WindowPlacement windowPlacement(const QString& setupKey)
+{
+    const QString group = QStringLiteral("ui/screens/") + setupKey + QLatin1Char('/');
+    WindowPlacement placement;
+    placement.geometry  = store().value(group + QStringLiteral("geometry")).toByteArray();
+    placement.maximized = store().value(group + QStringLiteral("maximized"), false).toBool();
+    placement.normal    = store().value(group + QStringLiteral("normal")).toRect();
+    return placement;
+}
+
+void setWindowPlacement(const QString& setupKey, const WindowPlacement& placement)
+{
+    const QString group = QStringLiteral("ui/screens/") + setupKey + QLatin1Char('/');
+    store().setValue(group + QStringLiteral("geometry"), placement.geometry);
+    store().setValue(group + QStringLiteral("maximized"), placement.maximized);
+    store().setValue(group + QStringLiteral("normal"), placement.normal);
+}
+
 QByteArray splitterState() { return store().value(QStringLiteral("ui/splitter")).toByteArray(); }
 void setSplitterState(const QByteArray& v) { store().setValue(QStringLiteral("ui/splitter"), v); }
 
-QByteArray bodySplitterState()
+// --- video -------------------------------------------------------------------
+int  videoMask()               { return store().value(QStringLiteral("video/mask"), 0).toInt(); }
+void setVideoMask(int mask)    { store().setValue(QStringLiteral("video/mask"), mask); }
+// De fabrica, imagen arriba y debajo el ecualizador (izquierda) y los filtros
+// de video (derecha): MainWindow::VideoWithEqualizer.
+int  videoLayout()             { return store().value(QStringLiteral("video/layout"), 2).toInt(); }
+void setVideoLayout(int value) { store().setValue(QStringLiteral("video/layout"), value); }
+bool videoFiltersVisible()     { return store().value(QStringLiteral("video/filters"), true).toBool(); }
+void setVideoFiltersVisible(bool v) { store().setValue(QStringLiteral("video/filters"), v); }
+int  videoScrubFramesPer100()  { return store().value(QStringLiteral("video/scrub"), 10).toInt(); }
+void setVideoScrubFramesPer100(int v) { store().setValue(QStringLiteral("video/scrub"), v); }
+
+int  seekStepMs()              { return store().value(QStringLiteral("player/seekStep"), 5000).toInt(); }
+void setSeekStepMs(int v)      { store().setValue(QStringLiteral("player/seekStep"), v); }
+int  volumeStepPercent()       { return store().value(QStringLiteral("player/volumeStep"), 5).toInt(); }
+void setVolumeStepPercent(int v) { store().setValue(QStringLiteral("player/volumeStep"), v); }
+
+bool videoGestureSeek()        { return store().value(QStringLiteral("video/gestureSeek"), true).toBool(); }
+void setVideoGestureSeek(bool v) { store().setValue(QStringLiteral("video/gestureSeek"), v); }
+bool videoGestureVolume()      { return store().value(QStringLiteral("video/gestureVolume"), true).toBool(); }
+void setVideoGestureVolume(bool v) { store().setValue(QStringLiteral("video/gestureVolume"), v); }
+bool videoGestureWheel()       { return store().value(QStringLiteral("video/gestureWheel"), true).toBool(); }
+void setVideoGestureWheel(bool v) { store().setValue(QStringLiteral("video/gestureWheel"), v); }
+int  videoPreviewWidth()       { return store().value(QStringLiteral("video/previewWidth"), 260).toInt(); }
+void setVideoPreviewWidth(int v) { store().setValue(QStringLiteral("video/previewWidth"), v); }
+int  volumeBarShape()          { return store().value(QStringLiteral("video/volumeShape"), 0).toInt(); }
+void setVolumeBarShape(int v)  { store().setValue(QStringLiteral("video/volumeShape"), v); }
+QString volumeBarColor()       { return store().value(QStringLiteral("video/volumeColor")).toString(); }
+void setVolumeBarColor(const QString& v) { store().setValue(QStringLiteral("video/volumeColor"), v); }
+
+// --- disposicion de los paneles -------------------------------------------
+QByteArray dockState() { return store().value(QStringLiteral("ui/docks")).toByteArray(); }
+void setDockState(const QByteArray& v) { store().setValue(QStringLiteral("ui/docks"), v); }
+
+QList<SavedLayout> savedLayouts()
 {
-    return store().value(QStringLiteral("ui/bodySplitter")).toByteArray();
-}
-void setBodySplitterState(const QByteArray& v)
-{
-    store().setValue(QStringLiteral("ui/bodySplitter"), v);
+    QList<SavedLayout> layouts;
+    QSettings& s = store();
+    const int count = s.beginReadArray(QStringLiteral("ui/layouts"));
+    for (int i = 0; i < count; ++i) {
+        s.setArrayIndex(i);
+        SavedLayout layout;
+        layout.name  = s.value(QStringLiteral("name")).toString();
+        layout.state = s.value(QStringLiteral("state")).toByteArray();
+        if (!layout.name.isEmpty() && !layout.state.isEmpty())
+            layouts.append(layout);
+    }
+    s.endArray();
+    return layouts;
 }
 
-QByteArray panelsSplitterState()
+namespace {
+void writeLayouts(const QList<SavedLayout>& layouts)
 {
-    return store().value(QStringLiteral("ui/panelsSplitter")).toByteArray();
+    QSettings& s = store();
+    s.remove(QStringLiteral("ui/layouts"));
+    s.beginWriteArray(QStringLiteral("ui/layouts"), int(layouts.size()));
+    for (int i = 0; i < layouts.size(); ++i) {
+        s.setArrayIndex(i);
+        s.setValue(QStringLiteral("name"), layouts.at(i).name);
+        s.setValue(QStringLiteral("state"), layouts.at(i).state);
+    }
+    s.endArray();
 }
-void setPanelsSplitterState(const QByteArray& v)
+} // namespace
+
+void saveLayout(const QString& name, const QByteArray& state)
 {
-    store().setValue(QStringLiteral("ui/panelsSplitter"), v);
+    QList<SavedLayout> layouts = savedLayouts();
+    bool replaced = false;
+    for (SavedLayout& existing : layouts) {
+        if (existing.name == name) {
+            existing.state = state;
+            replaced = true;
+        }
+    }
+    if (!replaced)
+        layouts.append({name, state});
+    writeLayouts(layouts);
 }
 
-bool bodySwapped()          { return store().value(QStringLiteral("ui/bodySwapped"), false).toBool(); }
-void setBodySwapped(bool v) { store().setValue(QStringLiteral("ui/bodySwapped"), v); }
-
-bool panelsSwapped()          { return store().value(QStringLiteral("ui/panelsSwapped"), false).toBool(); }
-void setPanelsSwapped(bool v) { store().setValue(QStringLiteral("ui/panelsSwapped"), v); }
-
-bool panelVisible(const QString& id)
+void removeLayout(const QString& name)
 {
-    return store().value(QStringLiteral("ui/panel/") + id, true).toBool();
+    QList<SavedLayout> layouts = savedLayouts();
+    layouts.erase(std::remove_if(layouts.begin(), layouts.end(),
+                                 [&](const SavedLayout& l) { return l.name == name; }),
+                  layouts.end());
+    writeLayouts(layouts);
 }
-void setPanelVisible(const QString& id, bool v)
-{
-    store().setValue(QStringLiteral("ui/panel/") + id, v);
-}
-
-bool eqPanelVisible() { return store().value(QStringLiteral("ui/eqPanel"), false).toBool(); }
-void setEqPanelVisible(bool v) { store().setValue(QStringLiteral("ui/eqPanel"), v); }
 
 // --- apariencia e idioma ---------------------------------------------------
 QString themeId()

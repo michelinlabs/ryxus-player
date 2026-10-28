@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RyxusPlayer VERSION 1.3.0 LANGUAGES CXX)
+project(RyxusPlayer VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ if(MSVC)
                             _CRT_SECURE_NO_WARNINGS)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia)
 find_package(taglib CONFIG REQUIRED)
 
 qt_standard_project_setup()
@@ -62,6 +62,15 @@ set(RYXUS_SOURCES
     src/ui/FlatButton.h             src/ui/FlatButton.cpp
     src/ui/RibbonTabBar.h           src/ui/RibbonTabBar.cpp
     src/ui/SettingsDialog.h         src/ui/SettingsDialog.cpp
+    src/ui/PanelDock.h              src/ui/PanelDock.cpp
+    src/ui/Commands.h               src/ui/Commands.cpp
+    src/ui/VideoMasks.h             src/ui/VideoMasks.cpp
+    src/ui/VideoPanel.h             src/ui/VideoPanel.cpp
+    src/ui/VideoFrameProcessor.h    src/ui/VideoFrameProcessor.cpp
+    src/ui/SubtitleStyle.h          src/ui/SubtitleStyle.cpp
+    src/ui/VideoFilterPanel.h       src/ui/VideoFilterPanel.cpp
+    src/core/MediaStream.h          src/core/MediaStream.cpp
+    src/core/Subtitles.h            src/core/Subtitles.cpp
 
     third_party/miniaudio_impl.cpp
 )
@@ -92,7 +101,7 @@ target_include_directories(RyxusPlayer PRIVATE
 target_compile_definitions(RyxusPlayer PRIVATE
     RYXUS_VERSION="${PROJECT_VERSION}")
 
-target_link_libraries(RyxusPlayer PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(RyxusPlayer PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Multimedia)
 
 # API del shell (SHOpenFolderAndSelectItems) para el boton "Ubicacion".
 if(WIN32)

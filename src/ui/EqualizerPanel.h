@@ -26,6 +26,9 @@ public:
     EqualizerPanel(Equalizer* equalizer, AudioEngine* engine, QWidget* parent = nullptr);
 
     void loadFromSettings();
+
+    // Lo mismo que marcar o desmarcar "Activado" (para el atajo de teclado).
+    void setEqualizerEnabled(bool enabled);
     void saveToSettings() const;
 
     // El plot solo se refresca cuando el panel esta visible y hay audio.
@@ -35,7 +38,6 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 signals:
-    void closeRequested();
     void enabledChanged(bool enabled);
 
 private slots:
@@ -64,7 +66,6 @@ private:
     FlatButton*    m_effectsButton = nullptr;
     FlatButton*    m_reset   = nullptr;
     FlatButton*    m_store   = nullptr;
-    FlatButton*    m_close   = nullptr;
 
     bool m_loading = false;
 };

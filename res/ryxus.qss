@@ -110,6 +110,42 @@ QSplitter#panelsSplitter::handle:pressed {
 
 QFrame#eqDivider { color: @border; background-color: @border; max-width: 1px; }
 
+/* --- paneles acoplables (PanelDock) --------------------------------------- */
+
+/* El QMainWindow interno no pinta: el fondo de la ventana se ve a traves de
+   los paneles y en los huecos que dejan. */
+QMainWindow#dockHost { background: transparent; }
+
+/* Divisores entre paneles: anchos para agarrarlos con facilidad, pero del
+   color de la carcasa para que en reposo se lean como una simple separacion. */
+QMainWindow#dockHost::separator {
+    background-color: @chrome;
+    width: 6px;
+    height: 6px;
+}
+QMainWindow#dockHost::separator:hover { background-color: @accentBright; }
+
+#panelDockTitle {
+    background-color: @chromeLight;
+    border-bottom: 1px solid @chrome;
+}
+
+/* Pestanas de los paneles agrupados. Solo las del contenedor (hijas
+   directas), no las que pudiera haber dentro de un panel. */
+QMainWindow#dockHost > QTabBar { background: transparent; }
+QMainWindow#dockHost > QTabBar::tab {
+    background-color: @chrome;
+    color: @textDim;
+    padding: 4px 14px;
+    border: none;
+    border-bottom: 2px solid transparent;
+}
+QMainWindow#dockHost > QTabBar::tab:hover    { color: @text; }
+QMainWindow#dockHost > QTabBar::tab:selected {
+    color: @text;
+    border-bottom: 2px solid @accentBright;
+}
+
 /* ------------------------------------------------------- panel izquierdo -- */
 
 QScrollArea#metaScroll, QScrollArea#metaScroll > QWidget > QWidget,
@@ -210,6 +246,9 @@ QTreeView::item:selected        { background-color: @selection; color: @text; }
 QTreeView::item:selected:active { background-color: @selection; color: @text; }
 
 QTreeView::branch { background: transparent; }
+/* En el arbol de carpetas el galon va pintado en el icono de cada carpeta
+   (ver LibraryPanel): las flechas nativas saldrian repetidas. */
+QTreeView#libraryTree::branch { image: none; border-image: none; }
 QTreeView::branch:has-children:!has-siblings:closed,
 QTreeView::branch:closed:has-children:has-siblings {
     image: none;

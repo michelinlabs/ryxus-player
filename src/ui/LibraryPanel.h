@@ -41,8 +41,13 @@ private slots:
     void onQuickSearch(const QString& text);
     void showTreeContextMenu(const QPoint& pos);
 
+protected:
+    // Clic en el galon de una carpeta: la despliega o la contrae.
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     void buildUi();
+    void toggleItem(QTreeWidgetItem* item);   // un solo nivel
     void rebuildRoots();
     void refreshEmptyState();
     void refreshDriveFilters();

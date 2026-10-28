@@ -176,10 +176,15 @@ void SystemAudioTap::suggestRouting(QByteArray* source, QByteArray* output)
 
 bool SystemAudioTap::start(const QByteArray& sourceId, const QByteArray& outputId, QString* error)
 {
-    const auto fail = [&](const QString& message) {
+    // `result` es el codigo de miniaudio que hizo fallar el paso. Se anade al
+    // mensaje para que, si el fallo persiste, el usuario pueda decir cual fue.
+    const auto fail = [&](const QString& message, bool retryable, ma_result result = MA_SUCCESS) {
         m_error = message;
+        if (result != MA_SUCCESS)
+            m_error += QStringLiteral(" (%1)").arg(QString::fromUtf8(ma_result_description(result)));
+        m_retryable = retryable;
         if (error)
-            *error = message;
+            *error = m_error;
         stop();
         return false;
     };
@@ -190,12 +195,13 @@ bool SystemAudioTap::start(const QByteArray& sourceId, const QByteArray& outputI
     // a entrar y sube sin parar. Se rechaza antes de abrir nada.
     if (!sourceId.isEmpty() && sourceId == outputId) {
         return fail(Lang::tr("La salida procesada tiene que ser distinta de la que se captura: "
-                             "si no, el sonido se realimenta."));
+                             "si no, el sonido se realimenta."), false);
     }
 
     m_ring = new ma_pcm_rb;
-    if (ma_pcm_rb_init(kFormat, kChannels, kRingFrames, nullptr, nullptr, ring(m_ring)) != MA_SUCCESS)
-        return fail(Lang::tr("No se pudo preparar el buffer de audio."));
+    ma_result result = ma_pcm_rb_init(kFormat, kChannels, kRingFrames, nullptr, nullptr, ring(m_ring));
+    if (result != MA_SUCCESS)
+        return fail(Lang::tr("No se pudo preparar el buffer de audio."), false, result);
 
     // --- captura de la mezcla del sistema ---------------------------------
     ma_device_id captureId{};
@@ -208,10 +214,18 @@ bool SystemAudioTap::start(const QByteArray& sourceId, const QByteArray& outputI
     captureConfig.sampleRate        = kRate;
     captureConfig.dataCallback      = captureThunk;
     captureConfig.pUserData         = this;
+    // El cambio de frecuencia lo hace miniaudio y no Windows: asi el loopback
+    // se abre siempre con el formato propio de la salida, que es la
+    // combinacion que menos pegas pone.
+    captureConfig.wasapi.noAutoConvertSRC = MA_TRUE;
 
     m_capture = new ma_device;
-    if (ma_device_init(nullptr, &captureConfig, dev(m_capture)) != MA_SUCCESS) {
-        return fail(Lang::tr("Windows no dejo capturar la mezcla del sistema."));
+    result = ma_device_init(nullptr, &captureConfig, dev(m_capture));
+    if (result != MA_SUCCESS) {
+        // Puede que no se haya llegado a crear: que stop() no lo libere.
+        delete dev(m_capture);
+        m_capture = nullptr;
+        return fail(Lang::tr("Windows no dejo capturar la mezcla del sistema."), true, result);
     }
 
     // --- salida ------------------------------------------------------------
@@ -227,20 +241,27 @@ bool SystemAudioTap::start(const QByteArray& sourceId, const QByteArray& outputI
     playbackConfig.pUserData          = this;
 
     m_playback = new ma_device;
-    if (ma_device_init(nullptr, &playbackConfig, dev(m_playback)) != MA_SUCCESS)
-        return fail(Lang::tr("No se pudo abrir la salida elegida."));
+    result = ma_device_init(nullptr, &playbackConfig, dev(m_playback));
+    if (result != MA_SUCCESS) {
+        delete dev(m_playback);
+        m_playback = nullptr;
+        return fail(Lang::tr("No se pudo abrir la salida elegida."), true, result);
+    }
 
     m_equalizer.prepare(kRate);
     m_effects.prepare(kRate);
     m_limiter.prepare(kRate, kChannels);
     applySettings();
 
-    if (ma_device_start(dev(m_capture)) != MA_SUCCESS)
-        return fail(Lang::tr("Windows no dejo capturar la mezcla del sistema."));
-    if (ma_device_start(dev(m_playback)) != MA_SUCCESS)
-        return fail(Lang::tr("No se pudo abrir la salida elegida."));
+    result = ma_device_start(dev(m_capture));
+    if (result != MA_SUCCESS)
+        return fail(Lang::tr("Windows no dejo capturar la mezcla del sistema."), true, result);
+    result = ma_device_start(dev(m_playback));
+    if (result != MA_SUCCESS)
+        return fail(Lang::tr("No se pudo abrir la salida elegida."), true, result);
 
     m_running = true;
+    m_retryable = false;
     m_error.clear();
     m_sync->start();
     return true;
@@ -266,6 +287,15 @@ void SystemAudioTap::stop()
         delete ring(m_ring);
         m_ring = nullptr;
     }
+}
+
+bool SystemAudioTap::isRunning() const
+{
+    // m_running solo dice que se arranco. Si Windows se lleva un dispositivo
+    // (una interfaz USB desenchufada), miniaudio lo para por su cuenta.
+    return m_running && m_capture && m_playback
+        && ma_device_is_started(dev(m_capture))
+        && ma_device_is_started(dev(m_playback));
 }
 
 void SystemAudioTap::applySettings()
