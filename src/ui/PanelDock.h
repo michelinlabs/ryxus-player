@@ -22,6 +22,9 @@ public:
     PanelDock(const QString& title, const QString& id, QWidget* content,
               QWidget* parent = nullptr);
 
+    // Sin barra de titulo (el video a pantalla completa): solo el contenido.
+    void setTitleBarShown(bool shown);
+
 signals:
     // El usuario lo cerro con su boton (no una disposicion al recolocar).
     void userClosed();
@@ -41,6 +44,7 @@ private:
 
     QWidget*    m_frame = nullptr;   // envuelve el contenido; su margen es el borde
     QWidget*    m_bar   = nullptr;
+    QWidget*    m_noBar = nullptr;   // titulo vacio: QDockWidget no admite ninguno
     QLabel*     m_title = nullptr;
     FlatButton* m_float = nullptr;
     FlatButton* m_hide  = nullptr;

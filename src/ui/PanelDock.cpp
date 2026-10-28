@@ -88,6 +88,17 @@ PanelDock::PanelDock(const QString& title, const QString& id, QWidget* content, 
     onFloatingChanged(false);
 }
 
+void PanelDock::setTitleBarShown(bool shown)
+{
+    if (shown == (titleBarWidget() == m_bar))
+        return;
+    if (!m_noBar)
+        m_noBar = new QWidget(this);   // sin tamano: no ocupa nada
+    // QDockWidget no borra el titulo que se le quita: m_bar sigue vivo.
+    setTitleBarWidget(shown ? m_bar : m_noBar);
+    m_bar->setVisible(shown);
+}
+
 void PanelDock::onFloatingChanged(bool floating)
 {
     m_float->setIconId(floating ? Icons::WinMaximize : Icons::WinRestore);

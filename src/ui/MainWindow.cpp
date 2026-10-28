@@ -669,6 +669,7 @@ void MainWindow::wireSignals()
             loadSidecarSubtitles(path);
     });
     connect(m_video, &VideoPanel::fullscreenRequested, this, &MainWindow::toggleVideoFullscreen);
+    connect(m_video, &VideoPanel::playPauseRequested, this, &MainWindow::togglePlayPause);
 }
 
 void MainWindow::installShortcuts()
@@ -2821,6 +2822,11 @@ void MainWindow::onVideoActiveChanged()
             m_inVideoMode = true;
         }
         applyVideoLayout(Settings::videoLayout());
+        // La mascara se recuerda de un video a otro: que no pase desapercibida
+        // (el modo cine tapa arriba y abajo y parece un video recortado).
+        if (Settings::videoMask() != VideoMasks::None)
+            m_video->showNotice(Lang::tr("Mascara: %1  -  Alt+M para cambiarla")
+                                    .arg(VideoMasks::name(Settings::videoMask())), 4000);
         // El teclado al video: las flechas avanzan y cambian el volumen sin
         // que el foco se quede en una lista que ahora no se ve.
         m_video->setFocus(Qt::OtherFocusReason);
@@ -3011,15 +3017,17 @@ void MainWindow::fillVideoMenu(QMenu* menu)
     scrub->setFont(Theme::uiFont(9));
     QAction* hint = scrub->addAction(Lang::tr("Arrastra sobre la imagen para moverte por fotogramas"));
     hint->setEnabled(false);
+    hint = scrub->addAction(Lang::tr("Cuanto mas largo el arrastre, mas rapido avanza"));
+    hint->setEnabled(false);
     scrub->addSeparator();
     {
         const struct { int frames; const char* label; } kSteps[] = {
-            {2,   "Muy fina: 2 fotogramas cada 100 px"},
-            {5,   "Fina: 5 fotogramas cada 100 px"},
-            {10,  "Normal: 10 fotogramas cada 100 px"},
-            {25,  "Rapida: 25 fotogramas cada 100 px"},
-            {60,  "Muy rapida: 60 fotogramas cada 100 px"},
-            {200, "Saltos largos: 200 fotogramas cada 100 px"},
+            {5,   "Muy fina: 5 fotogramas cada 100 px"},
+            {15,  "Fina: 15 fotogramas cada 100 px"},
+            {30,  "Media: 30 fotogramas cada 100 px"},
+            {60,  "Normal: 60 fotogramas cada 100 px"},
+            {150, "Rapida: 150 fotogramas cada 100 px"},
+            {400, "Saltos largos: 400 fotogramas cada 100 px"},
         };
         auto* group = new QActionGroup(scrub);
         const int current = Settings::videoScrubFramesPer100();
@@ -3197,6 +3205,8 @@ void MainWindow::setVideoMask(int mask)
     m_video->setMask(mask);
     m_videoFilters->setCurrentMask(mask);
     Settings::setVideoMask(mask);
+    // En pantalla completa no hay paleta a la vista: se dice cual queda.
+    m_video->showNotice(Lang::tr("Mascara: %1").arg(VideoMasks::name(mask)), 1800);
 }
 
 void MainWindow::setVideoFiltersVisible(bool visible)
@@ -3227,6 +3237,8 @@ void MainWindow::toggleVideoFullscreen()
         m_docks[DockVideo]->show();
         m_titleBar->hide();
         m_playerBar->hide();
+        m_docks[DockVideo]->setTitleBarShown(false);
+        m_video->setCursorAutoHide(true);
         showFullScreen();
         showCommandToast(Lang::tr("Esc para salir de la pantalla completa"));
         return;
@@ -3237,6 +3249,8 @@ void MainWindow::toggleVideoFullscreen()
     setGeometry(m_preFullscreenGeometry);
     m_titleBar->show();
     m_playerBar->show();
+    m_docks[DockVideo]->setTitleBarShown(true);
+    m_video->setCursorAutoHide(false);
     m_dockHost->restoreState(m_preFullscreenDocks, kDockStateVersion);
 }
 

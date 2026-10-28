@@ -8,6 +8,7 @@
 #include "ui/Theme.h"
 #include "ui/VideoMasks.h"
 
+#include <QApplication>
 #include <QHBoxLayout>
 #include <QTimer>
 
@@ -17,6 +18,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QThread>
+#include <QToolTip>
 #include "ui/VideoFrameProcessor.h"
 #include <QVideoFrame>
 #include <QVideoSink>
@@ -45,6 +47,16 @@ protected:
 };
 
 constexpr int kScrubThreshold = 6;   // px antes de dar un clic por arrastre
+constexpr int kCursorIdleMs = 3000;  // pantalla completa: cursor quieto y se va
+
+// Fotogramas por un arrastre de `travel` px con `per100` de sensibilidad. Crece
+// mas rapido que la distancia: cerca se afina fotograma a fotograma y un
+// arrastre largo cruza minutos de video. A 400 px ya es el doble de lineal.
+double scrubFrames(double travel, int per100)
+{
+    const double linear = travel * per100 / 100.0;
+    return linear * (1.0 + std::abs(travel) / 400.0);
+}
 
 QString formatPrecise(qint64 ms)
 {
@@ -68,8 +80,8 @@ VideoPanel::VideoPanel(AudioEngine* engine, QWidget* parent)
     // Pinta todo su rectangulo: Qt no repinta lo que hay debajo.
     setAttribute(Qt::WA_OpaquePaintEvent);
     setFocusPolicy(Qt::ClickFocus);   // un clic en la imagen le da el teclado
-    setToolTip(Lang::tr("Arrastra a izquierda o derecha para retroceder o avanzar "
-                        "fotogramas\nDoble clic: pantalla completa - Clic derecho: menu de video"));
+    setToolTip(Lang::tr("Clic: pausa / play - Arrastra a izquierda o derecha para retroceder "
+                        "o avanzar\nDoble clic: pantalla completa - Clic derecho: menu de video"));
     m_subtitleStyle = SubtitleStyle::load();
     buildOverlay();
 
@@ -119,6 +131,27 @@ VideoPanel::VideoPanel(AudioEngine* engine, QWidget* parent)
         m_seekLabelUntil = QDateTime::currentMSecsSinceEpoch() + 900;
         m_osdTimer->start(950);
         hidePreview();
+    });
+
+    m_clickTimer = new QTimer(this);
+    m_clickTimer->setSingleShot(true);
+    // Mas corto que el doble clic de Windows (500 ms) para que no se note el
+    // retraso; si el doble llega despues, deshace la pausa (ver abajo).
+    m_clickTimer->setInterval(std::min(QApplication::doubleClickInterval(), 280));
+    connect(m_clickTimer, &QTimer::timeout, this, [this]() {
+        m_clickToggled = true;
+        emit playPauseRequested();
+    });
+
+    m_cursorTimer = new QTimer(this);
+    m_cursorTimer->setSingleShot(true);
+    m_cursorTimer->setInterval(kCursorIdleMs);
+    connect(m_cursorTimer, &QTimer::timeout, this, [this]() {
+        // No en pleno arrastre: el cursor dice que gesto se esta haciendo.
+        if (m_cursorAutoHide && !m_pressed && rect().contains(mapFromGlobal(QCursor::pos()))) {
+            setCursor(Qt::BlankCursor);
+            QToolTip::hideText();
+        }
     });
 
     m_osdTimer = new QTimer(this);
@@ -272,6 +305,39 @@ void VideoPanel::placeOverlay()
     m_overlay->move(width() - m_overlay->width() - 14, height() - m_overlay->height() - 14);
 }
 
+bool VideoPanel::event(QEvent* event)
+{
+    // En pantalla completa la ayuda flotante solo estorba a la imagen.
+    if (event->type() == QEvent::ToolTip && m_cursorAutoHide) {
+        event->ignore();
+        return true;
+    }
+    return QWidget::event(event);
+}
+
+void VideoPanel::setCursorAutoHide(bool on)
+{
+    m_cursorAutoHide = on;
+    if (on)
+        QToolTip::hideText();
+    if (on) {
+        m_cursorTimer->start();
+    } else {
+        m_cursorTimer->stop();
+        if (!m_pressed)
+            unsetCursor();
+    }
+}
+
+void VideoPanel::wakeCursor()
+{
+    if (!m_cursorAutoHide)
+        return;
+    if (!m_pressed && cursor().shape() == Qt::BlankCursor)
+        unsetCursor();
+    m_cursorTimer->start();
+}
+
 void VideoPanel::showOverlay()
 {
     if (m_frame.isNull() || m_gesture != GestureNone)
@@ -322,6 +388,7 @@ void VideoPanel::mousePressEvent(QMouseEvent* event)
 
 void VideoPanel::mouseMoveEvent(QMouseEvent* event)
 {
+    wakeCursor();
     if (!m_pressed) {
         showOverlay();
         return;
@@ -364,7 +431,7 @@ void VideoPanel::mouseMoveEvent(QMouseEvent* event)
     // no se mueve hasta soltar: mientras, la previsualizacion ensena adonde.
     const double dx = delta.x();
     const double travel = dx - std::copysign(double(kScrubThreshold), dx);
-    const int frames = int(std::lround(travel * m_scrubPer100 / 100.0));
+    const int frames = int(std::lround(scrubFrames(travel, m_scrubPer100)));
     m_previewX = event->position().x();
     if (frames == m_scrubFrames && m_previewShown) {
         update();
@@ -393,9 +460,19 @@ void VideoPanel::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
     const Gesture gesture = m_gesture;
+    const bool click = m_pressed && gesture == GestureNone;
     m_pressed = false;
     m_gesture = GestureNone;
     unsetCursor();
+    wakeCursor();
+
+    if (click) {
+        // Clic quieto sobre la imagen: pausa / play, en cuanto se sepa que no
+        // es el primero de un doble clic.
+        m_clickToggled = false;
+        m_clickTimer->start();
+        return;
+    }
 
     if (gesture == GestureSeek) {
         m_engine->seekMs(m_scrubTargetMs);
@@ -585,6 +662,14 @@ void VideoPanel::showSeekOsd(qint64 deltaMs, qint64 targetMs)
     update();
 }
 
+void VideoPanel::showNotice(const QString& text, int ms)
+{
+    m_seekLabel = text;
+    m_seekLabelUntil = QDateTime::currentMSecsSinceEpoch() + ms;
+    m_osdTimer->start(ms + 50);
+    update();
+}
+
 void VideoPanel::paintLabel(QPainter& p, const QString& text)
 {
     QFont font = Theme::uiFont(12, QFont::DemiBold);
@@ -758,6 +843,15 @@ void VideoPanel::contextMenuEvent(QContextMenuEvent* event)
 
 void VideoPanel::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton)
-        emit fullscreenRequested();
+    if (event->button() != Qt::LeftButton)
+        return;
+    // El doble clic es pantalla completa y nada mas: si el primer clic ya
+    // alcanzo a pausar, se vuelve a como estaba.
+    if (m_clickTimer->isActive())
+        m_clickTimer->stop();
+    else if (m_clickToggled)
+        emit playPauseRequested();
+    m_clickToggled = false;
+    m_pressed = false;   // el segundo clic no cuenta como clic suelto
+    emit fullscreenRequested();
 }

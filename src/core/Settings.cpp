@@ -487,7 +487,7 @@ int  videoLayout()             { return store().value(QStringLiteral("video/layo
 void setVideoLayout(int value) { store().setValue(QStringLiteral("video/layout"), value); }
 bool videoFiltersVisible()     { return store().value(QStringLiteral("video/filters"), true).toBool(); }
 void setVideoFiltersVisible(bool v) { store().setValue(QStringLiteral("video/filters"), v); }
-int  videoScrubFramesPer100()  { return store().value(QStringLiteral("video/scrub"), 10).toInt(); }
+int  videoScrubFramesPer100()  { return store().value(QStringLiteral("video/scrub"), 60).toInt(); }
 void setVideoScrubFramesPer100(int v) { store().setValue(QStringLiteral("video/scrub"), v); }
 
 int  seekStepMs()              { return store().value(QStringLiteral("player/seekStep"), 5000).toInt(); }

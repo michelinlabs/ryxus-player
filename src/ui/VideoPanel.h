@@ -52,6 +52,8 @@ public:
     void showVolumeOsd(float volume);
     // Aviso de un salto hecho con el teclado ("+5 s  1:23.40").
     void showSeekOsd(qint64 deltaMs, qint64 targetMs);
+    // Un aviso de texto arriba (la mascara puesta, por ejemplo).
+    void showNotice(const QString& text, int ms = 2500);
 
     // Archivo del que salen las previsualizaciones (el video en curso).
     void setPreviewSource(const QString& path);
@@ -81,15 +83,21 @@ public:
     // entrega una copia reducida del fotograma, sin mascara.
     void setThumbnailsWanted(bool wanted);
 
+    // En pantalla completa el cursor se esconde tras unos segundos quieto y
+    // vuelve al mover el raton.
+    void setCursorAutoHide(bool on);
+
 signals:
     void menuRequested(const QPoint& globalPos);
     void fullscreenRequested();
+    void playPauseRequested();     // un clic sobre la imagen
     void filtersRequested();       // boton "Filtros" de la barra flotante
     void nextMaskRequested();      // boton de la mascara
     void volumeRequested(float volume);   // arrastre vertical
     void thumbnailSourceChanged(const QImage& frame);
 
 protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
@@ -128,9 +136,18 @@ private:
     FlatButton* m_maskButton = nullptr;
     QTimer*     m_overlayTimer = nullptr;
 
+    // Un clic es pausa / play, pero espera un poco por si es un doble clic
+    // (pantalla completa), que no debe pausar.
+    QTimer*     m_clickTimer = nullptr;
+    bool        m_clickToggled = false;   // el clic ya actuo antes del doble
+
+    QTimer*     m_cursorTimer = nullptr;
+    bool        m_cursorAutoHide = false;
+    void wakeCursor();
+
     // --- gestos ---------------------------------------------------------------
     enum Gesture { GestureNone, GestureSeek, GestureVolume };
-    int     m_scrubPer100 = 10;
+    int     m_scrubPer100 = 60;
     int     m_seekStepMs = 5000;
     bool    m_seekDragOn = true;
     bool    m_volumeDragOn = true;
