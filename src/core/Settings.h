@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QMap>
+#include <QRect>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -73,26 +74,96 @@ void       setSystemAudioSource(const QByteArray& id);
 QByteArray systemAudioOutput();          // salida por la que sale procesado
 void       setSystemAudioOutput(const QByteArray& id);
 
+// --- perfiles por interfaz -------------------------------------------------
+// Cada salida por la que se ha sacado el audio procesado guarda su propio
+// ecualizador y efectos: unos monitores y unos auriculares no se ecualizan
+// igual. Al pasar de una a otra se guarda lo de la que se deja y se carga lo
+// de la que llega.
+void saveOutputProfile(const QByteArray& outputId);   // lo actual, a su perfil
+bool loadOutputProfile(const QByteArray& outputId);   // false si no tiene
+
+// Salidas que el usuario ha usado alguna vez para lo procesado, la usada mas
+// recientemente primero. Son las unicas a las que se cambia solo al
+// conectarlas: un monitor HDMI que se enciende no debe llevarse el sonido.
+QList<QByteArray> knownOutputs();
+void touchKnownOutput(const QByteArray& outputId);
+void forgetOutput(const QByteArray& outputId);       // y borra su perfil
+
+// Nombre visible de una salida conocida: hace falta para mostrarla en
+// Ajustes aunque este desenchufada, cuando Windows ya no la lista.
+QString outputName(const QByteArray& outputId);
+void    setOutputName(const QByteArray& outputId, const QString& name);
+
+// Pasar solo a la interfaz que se conecta, y a otra si se va la que se usa.
+bool autoSwitchOutputs();
+void setAutoSwitchOutputs(bool value);
+
 // --- interfaz --------------------------------------------------------------
 QByteArray windowGeometry();
 void       setWindowGeometry(const QByteArray& value);
+
+// Tamano y posicion de la ventana para una combinacion concreta de
+// monitores (cuales hay, a que resolucion y donde). Asi el portatil solo, el
+// portatil con el monitor externo o el cambio de resolucion recuerdan cada
+// uno lo suyo. `setupKey` lo calcula MainWindow; aqui solo se guarda.
+struct WindowPlacement {
+    QByteArray geometry;           // saveGeometry()
+    bool       maximized = false;  // maximizado a mano contra el area util
+    QRect      normal;             // a donde se vuelve al desmaximizar
+};
+WindowPlacement windowPlacement(const QString& setupKey);
+void            setWindowPlacement(const QString& setupKey, const WindowPlacement& placement);
 QByteArray splitterState();
 void       setSplitterState(const QByteArray& value);
 
-// --- disposicion de las columnas -------------------------------------------
-// Tamanos de los dos divisores, si estan intercambiadas y cuales se ven.
-QByteArray bodySplitterState();
-void       setBodySplitterState(const QByteArray& value);
-QByteArray panelsSplitterState();
-void       setPanelsSplitterState(const QByteArray& value);
-bool       bodySwapped();
-void       setBodySwapped(bool value);
-bool       panelsSwapped();
-void       setPanelsSwapped(bool value);
-bool       panelVisible(const QString& id);
-void       setPanelVisible(const QString& id, bool value);
-bool       eqPanelVisible();
-void       setEqPanelVisible(bool value);
+// --- video -------------------------------------------------------------------
+int  videoMask();                 // VideoMasks::Id
+void setVideoMask(int mask);
+int  videoLayout();               // MainWindow::VideoLayout
+void setVideoLayout(int layout);
+// La paleta de filtros sale con las disposiciones de video salvo que el
+// usuario la haya cerrado: entonces no vuelve hasta que la pida.
+bool videoFiltersVisible();
+void setVideoFiltersVisible(bool visible);
+// Arrastrar sobre el video avanza o retrocede fotogramas: cuantos por cada
+// 100 pixeles recorridos con el raton.
+int  videoScrubFramesPer100();
+void setVideoScrubFramesPer100(int frames);
+
+// Paso de las flechas del teclado (y de la rueda sobre el video).
+int  seekStepMs();                 // avanzar / retroceder
+void setSeekStepMs(int ms);
+int  volumeStepPercent();          // subir / bajar volumen
+void setVolumeStepPercent(int percent);
+
+// Gestos sobre la imagen del video.
+bool videoGestureSeek();           // arrastrar a los lados
+void setVideoGestureSeek(bool on);
+bool videoGestureVolume();         // arrastrar arriba y abajo
+void setVideoGestureVolume(bool on);
+bool videoGestureWheel();          // rueda del raton
+void setVideoGestureWheel(bool on);
+int  videoPreviewWidth();          // ancho de la previsualizacion, en px
+void setVideoPreviewWidth(int px);
+int    volumeBarShape();           // VideoPanel::VolumeShape
+void   setVolumeBarShape(int shape);
+QString volumeBarColor();          // vacio: el color de acento del tema
+void   setVolumeBarColor(const QString& color);
+
+// --- disposicion de los paneles -------------------------------------------
+// Estado de QMainWindow::saveState() de los paneles acoplables: donde esta
+// cada uno, su tamano, si flota y si se ve.
+QByteArray dockState();
+void       setDockState(const QByteArray& value);
+
+// Disposiciones que guarda el usuario con nombre, para volver a ellas.
+struct SavedLayout {
+    QString    name;
+    QByteArray state;
+};
+QList<SavedLayout> savedLayouts();
+void saveLayout(const QString& name, const QByteArray& state);   // reemplaza si existe
+void removeLayout(const QString& name);
 
 // --- apariencia e idioma ---------------------------------------------------
 QString themeId();

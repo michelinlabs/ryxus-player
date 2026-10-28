@@ -19,6 +19,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QStackedWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -70,7 +71,7 @@ bool containsAudio(const QString& path, int depth = kAudioSearchDepth)
 // Icono de carpeta con galon delante cuando tiene subcarpetas dentro, para
 // que se vea de un vistazo cuales se pueden abrir y cuales no. El galon apunta
 // a la derecha si esta cerrada y hacia abajo si esta abierta.
-QIcon folderIcon(bool hasChildren, bool expanded)
+QIcon folderIcon(bool hasChildren, bool expanded, const QColor& folderColor = Theme::TextDim)
 {
     constexpr int kGlyph = 16;
     constexpr int kChevron = 10;
@@ -93,10 +94,23 @@ QIcon folderIcon(bool hasChildren, bool expanded)
     }
 
     Icons::paint(p, expanded ? Icons::FolderOpen : Icons::Folder,
-                 QRectF(x, 0, kGlyph, kGlyph), Theme::TextDim, 1.4);
+                 QRectF(x, 0, kGlyph, kGlyph), folderColor, 1.4);
     p.end();
 
     return QIcon(pm);
+}
+
+// Ancho de la zona del galon, contado desde el borde izquierdo de la fila:
+// el relleno de la fila mas el galon pintado en el icono. Un clic ahi
+// despliega o contrae la carpeta en vez de seleccionarla.
+constexpr int kChevronHitWidth = 16;
+
+// Icono de una carpeta del arbol, segun sea raiz o no, tenga subcarpetas con
+// musica y este abierta.
+QIcon iconFor(QTreeWidgetItem* item, bool isRoot, bool expandable)
+{
+    return folderIcon(expandable, item->isExpanded(),
+                      isRoot ? Theme::AccentBright : Theme::TextDim);
 }
 
 } // namespace
@@ -200,6 +214,9 @@ void LibraryPanel::buildUi()
     m_tree->setExpandsOnDoubleClick(false);
     m_tree->setFrameShape(QFrame::NoFrame);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    // El galon de cada carpeta va pintado en su icono: los clics sobre el los
+    // atiende eventFilter() para desplegar y contraer.
+    m_tree->viewport()->installEventFilter(this);
     m_stack->addWidget(m_tree);
 
     root->addWidget(m_stack, 1);
@@ -312,9 +329,12 @@ QTreeWidgetItem* LibraryPanel::addRoot(const QString& path)
     item->setData(0, kPathRole, path);
     item->setData(0, kLoadedRole, false);
     item->setData(0, kIsRootRole, true);
-    item->setIcon(0, Icons::icon(Icons::FolderOpen, Theme::AccentBright, 16));
-
-    if (dir.exists())
+    // La raiz se da por desplegable mientras no se cargue: saber si tiene
+    // subcarpetas con musica obligaria a recorrerla al abrir el programa.
+    const bool expandable = dir.exists();
+    item->setData(0, kExpandableRole, expandable);
+    item->setIcon(0, iconFor(item, true, expandable));
+    if (expandable)
         item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
     return item;
 }
@@ -374,14 +394,50 @@ void LibraryPanel::populate(QTreeWidgetItem* item)
 void LibraryPanel::onItemExpanded(QTreeWidgetItem* item)
 {
     populate(item);
-    if (!item->data(0, kIsRootRole).toBool())
-        item->setIcon(0, folderIcon(item->data(0, kExpandableRole).toBool(), true));
+
+    // Una raiz que al cargarla resulta no tener subcarpetas con musica pierde
+    // el galon: prometia algo que no hay.
+    const bool isRoot = item->data(0, kIsRootRole).toBool();
+    if (isRoot && item->childCount() == 0) {
+        item->setData(0, kExpandableRole, false);
+        item->setChildIndicatorPolicy(QTreeWidgetItem::DontShowIndicator);
+    }
+    item->setIcon(0, iconFor(item, isRoot, item->data(0, kExpandableRole).toBool()));
 }
 
 void LibraryPanel::onItemCollapsed(QTreeWidgetItem* item)
 {
-    if (!item->data(0, kIsRootRole).toBool())
-        item->setIcon(0, folderIcon(item->data(0, kExpandableRole).toBool(), false));
+    item->setIcon(0, iconFor(item, item->data(0, kIsRootRole).toBool(),
+                             item->data(0, kExpandableRole).toBool()));
+}
+
+void LibraryPanel::toggleItem(QTreeWidgetItem* item)
+{
+    if (!item || !item->data(0, kExpandableRole).toBool())
+        return;
+    if (!item->isExpanded())
+        populate(item);
+    item->setExpanded(!item->isExpanded());
+}
+
+bool LibraryPanel::eventFilter(QObject* watched, QEvent* event)
+{
+    // Clic en el galon de una carpeta: se despliega o se contrae solo esa,
+    // sin cambiar la seleccion (y sin lanzar el escaneo de sus archivos).
+    if (watched == m_tree->viewport() && event->type() == QEvent::MouseButtonPress) {
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        const QPoint pos = mouse->position().toPoint();
+        QTreeWidgetItem* item = m_tree->itemAt(pos);
+        if (item && mouse->button() == Qt::LeftButton
+            && item->data(0, kExpandableRole).toBool()) {
+            const QRect row = m_tree->visualItemRect(item);
+            if (pos.x() >= row.left() && pos.x() < row.left() + kChevronHitWidth) {
+                toggleItem(item);
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void LibraryPanel::onItemDoubleClicked(QTreeWidgetItem* item, int)
@@ -390,17 +446,9 @@ void LibraryPanel::onItemDoubleClicked(QTreeWidgetItem* item, int)
     if (path.isEmpty())
         return;
 
-    // El doble clic alterna la rama entera: si estaba cerrada la abre hasta el
-    // fondo, y si estaba abierta la cierra del todo. Como el arbol se llena de
-    // forma perezosa, al abrir hay que ir poblando a medida que se baja.
-    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-    if (item->isExpanded()) {
-        collapseBranch(item);
-    } else {
-        int budget = kExpandBudget;
-        expandBranch(item, budget);
-    }
-    QGuiApplication::restoreOverrideCursor();
+    // El doble clic abre o cierra un solo nivel, como el galon. La rama
+    // entera se despliega desde el menu contextual ("Desplegar todo").
+    toggleItem(item);
 
     emit folderActivated(path);
 }
@@ -594,6 +642,17 @@ void LibraryPanel::showTreeContextMenu(const QPoint& pos)
     QAction* play = menu.addAction(Icons::icon(Icons::Play, Theme::TextDim),
                                    Lang::tr("Reproducir esta carpeta"));
     menu.addSeparator();
+
+    // La rama entera de una vez. Como el arbol se llena de forma perezosa,
+    // al desplegar hay que ir poblando a medida que se baja.
+    const bool expandable = item->data(0, kExpandableRole).toBool();
+    QAction* expandAll = menu.addAction(Icons::icon(Icons::ChevronDown, Theme::TextDim),
+                                        Lang::tr("Desplegar todo"));
+    expandAll->setEnabled(expandable);
+    QAction* collapseAll = menu.addAction(Icons::icon(Icons::ChevronRight, Theme::TextDim),
+                                          Lang::tr("Contraer todo"));
+    collapseAll->setEnabled(expandable && item->isExpanded());
+    menu.addSeparator();
     QAction* refresh = menu.addAction(Icons::icon(Icons::Refresh, Theme::TextDim),
                                       Lang::tr("Actualizar"));
     QAction* close = menu.addAction(Icons::icon(Icons::Close, Theme::TextDim),
@@ -603,6 +662,13 @@ void LibraryPanel::showTreeContextMenu(const QPoint& pos)
     QAction* chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos));
     if (chosen == play) {
         emit folderPlayRequested(path);
+    } else if (chosen == expandAll) {
+        QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+        int budget = kExpandBudget;
+        expandBranch(item, budget);
+        QGuiApplication::restoreOverrideCursor();
+    } else if (chosen == collapseAll) {
+        collapseBranch(item);
     } else if (chosen == refresh) {
         const bool wasExpanded = item->isExpanded();
         item->takeChildren();

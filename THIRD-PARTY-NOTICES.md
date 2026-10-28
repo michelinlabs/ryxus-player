@@ -31,6 +31,16 @@ componentes de terceros que usa conservan la suya:
 - Licencia: **zlib**
 - Se distribuye como dependencia de TagLib (`z.dll`).
 
+## FFmpeg
+
+- Licencia: **LGPL 2.1 o posterior** (compilación sin componentes GPL)
+- Sitio: https://ffmpeg.org — código: https://ffmpeg.org/download.html
+- Uso: reproducción de vídeo y de los formatos de audio que miniaudio no abre,
+  a través del módulo Qt Multimedia. Se distribuye enlazado **dinámicamente**
+  (`avcodec`, `avformat`, `avutil`, `swresample`, `swscale`), con las DLL que
+  publica Qt para la versión 6.8.3, y se puede reemplazar por otra compilación
+  compatible sin recompilar Ryxus Player.
+
 ---
 
 ## Sobre el diseño de la interfaz

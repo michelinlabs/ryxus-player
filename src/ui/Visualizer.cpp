@@ -99,7 +99,8 @@ void Visualizer::mousePressEvent(QMouseEvent* event)
 
 void Visualizer::refresh()
 {
-    if (!m_engine)
+    // Oculto (por ejemplo, en una disposicion de video): ni FFT ni repintado.
+    if (!m_engine || !isVisible())
         return;
 
     m_engine->copyVisualSamples(m_samples.data(), m_samples.size());

@@ -19,11 +19,11 @@ NowPlayingPanel::NowPlayingPanel(AudioEngine* engine, QWidget* parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("nowPlayingPanel"));
-    // Ancho orientativo, no fijo: la columna vive dentro de un divisor y el
-    // usuario la estira. Se conserva un minimo para que la caratula y la ficha
-    // de detalles sigan siendo legibles.
+    // Ancho orientativo, no fijo: el panel es acoplable y el usuario lo
+    // estira. Se conserva un minimo para que la caratula y la ficha de
+    // detalles sigan siendo legibles. Sin maximo: en un panel acoplable,
+    // un tope dejaria un hueco vacio al lado cuando su zona es mas ancha.
     setMinimumWidth(232);
-    setMaximumWidth(560);
     resize(Theme::Metrics::LeftPanelWidth, height());
 
     auto* root = new QVBoxLayout(this);

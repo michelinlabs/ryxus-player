@@ -76,9 +76,13 @@ struct TrackInfo {
 
     static QString formatDuration(int ms, bool withHours = false);
     static QString formatSize(qint64 bytes);
+    // Todo lo que se puede abrir: audio y video.
     static QStringList supportedSuffixes();
+    static QStringList audioSuffixes();
+    static QStringList videoSuffixes();
     static QString supportedFilter();
     static bool isSupported(const QString& path);
+    static bool isVideo(const QString& path);
 };
 
 Q_DECLARE_METATYPE(TrackInfo)

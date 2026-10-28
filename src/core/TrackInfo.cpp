@@ -103,9 +103,10 @@ QString TrackInfo::formatSize(qint64 bytes)
     return QStringLiteral("%1 B").arg(bytes);
 }
 
-QStringList TrackInfo::supportedSuffixes()
+QStringList TrackInfo::audioSuffixes()
 {
-    // Decodificadores integrados en miniaudio + los que TagLib sabe etiquetar.
+    // Lo que abre miniaudio de serie, y lo que no (AAC, WMA, Opus...) lo
+    // decodifica FFmpeg. TagLib sabe etiquetar todos.
     static const QStringList kSuffixes = {
         QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("wav"),
         QStringLiteral("ogg"), QStringLiteral("oga"), QStringLiteral("m4a"),
@@ -116,13 +117,41 @@ QStringList TrackInfo::supportedSuffixes()
     return kSuffixes;
 }
 
+QStringList TrackInfo::videoSuffixes()
+{
+    // Contenedores de video habituales; los abre FFmpeg (MediaStream).
+    static const QStringList kSuffixes = {
+        QStringLiteral("mp4"), QStringLiteral("m4v"), QStringLiteral("mkv"),
+        QStringLiteral("webm"), QStringLiteral("avi"), QStringLiteral("mov"),
+        QStringLiteral("wmv"), QStringLiteral("flv"), QStringLiteral("mpg"),
+        QStringLiteral("mpeg"), QStringLiteral("ts"), QStringLiteral("m2ts"),
+        QStringLiteral("3gp"), QStringLiteral("ogv")
+    };
+    return kSuffixes;
+}
+
+QStringList TrackInfo::supportedSuffixes()
+{
+    static const QStringList kSuffixes = audioSuffixes() + videoSuffixes();
+    return kSuffixes;
+}
+
 QString TrackInfo::supportedFilter()
 {
-    QStringList globs;
-    for (const QString& s : supportedSuffixes())
-        globs << QStringLiteral("*.") + s;
-    return Lang::tr("Archivos de audio (%1);;Todos los archivos (*)")
-        .arg(globs.join(QLatin1Char(' ')));
+    const auto globs = [](const QStringList& suffixes) {
+        QStringList out;
+        for (const QString& s : suffixes)
+            out << QStringLiteral("*.") + s;
+        return out.join(QLatin1Char(' '));
+    };
+    return Lang::tr("Audio y video (%1);;Archivos de audio (%2);;Video (%3);;"
+                    "Todos los archivos (*)")
+        .arg(globs(supportedSuffixes()), globs(audioSuffixes()), globs(videoSuffixes()));
+}
+
+bool TrackInfo::isVideo(const QString& path)
+{
+    return videoSuffixes().contains(QFileInfo(path).suffix().toLower());
 }
 
 bool TrackInfo::isSupported(const QString& path)

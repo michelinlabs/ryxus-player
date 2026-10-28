@@ -57,9 +57,15 @@ public:
     // `sourceId` vacio = la salida predeterminada de Windows.
     bool start(const QByteArray& sourceId, const QByteArray& outputId, QString* error);
     void stop();
-    bool isRunning() const { return m_running; }
+    bool isRunning() const;
 
     QString lastError() const { return m_error; }
+
+    // El ultimo fallo puede arreglarse solo con volver a intentarlo. Pasa
+    // nada mas encender el PC: Windows tarda en dejar abrir la captura aunque
+    // el cable este bien. Un reparto que se realimenta, en cambio, no se
+    // arregla esperando.
+    bool lastErrorRetryable() const { return m_retryable; }
 
 signals:
     void stoppedUnexpectedly(const QString& reason);
@@ -78,6 +84,7 @@ private:
     void*  m_playback = nullptr;   // ma_device*
     void*  m_ring     = nullptr;   // ma_pcm_rb*
     bool   m_running  = false;
+    bool   m_retryable = false;
     QString m_error;
 
     // Cadena propia: compartir la del reproductor haria que dos hilos de audio
